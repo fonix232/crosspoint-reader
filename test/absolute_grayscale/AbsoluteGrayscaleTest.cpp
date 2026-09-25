@@ -94,3 +94,39 @@ TEST(AbsoluteGrayscale, TransparentPassesRetainBackgroundWithoutClearingBetweenP
   EXPECT_EQ(planes[0] & 0x0f, 0x0a);
   EXPECT_EQ(planes[1] & 0x0f, 0x0a);
 }
+
+TEST(AbsoluteGrayscale, GlyphEdgesMatchImageShadesOnMixedPages) {
+  // Opaque image occupies the low nibble, a glyph's four coverage levels the
+  // high nibble. Both must produce the same panel selectors for equal shades.
+  uint8_t planes[2] = {0xff, 0xff};
+  for (unsigned plane = 0; plane < 2; ++plane) {
+    for (unsigned level = 0; level < 4; ++level) {
+      const auto glyph = absoluteGlyphPixel(level, plane == 1, true, true);
+      const auto image = grayPlanePixel(level, plane == 1, true);
+      if (glyph.write && glyph.black) planes[plane] &= ~(0x80 >> level);
+      if (image.black) planes[plane] &= ~(0x08 >> level);
+    }
+  }
+  EXPECT_EQ(planes[0], 0x55);
+  EXPECT_EQ(planes[1], 0x33);
+}
+
+TEST(AbsoluteGrayscale, GlyphBackgroundIsTransparentAndWhiteTextIsInverted) {
+  for (bool msb : {false, true}) {
+    for (bool antialias : {false, true}) {
+      EXPECT_FALSE(absoluteGlyphPixel(3, msb, true, antialias).write);
+      EXPECT_FALSE(absoluteGlyphPixel(3, msb, false, antialias).write);
+      for (unsigned level = 0; level < 3; ++level) {
+        const auto black = absoluteGlyphPixel(level, msb, true, antialias);
+        const auto white = absoluteGlyphPixel(level, msb, false, antialias);
+        ASSERT_TRUE(black.write);
+        ASSERT_TRUE(white.write);
+        EXPECT_NE(black.black, white.black);
+        if (!antialias) {
+          EXPECT_TRUE(black.black);
+          EXPECT_FALSE(white.black);
+        }
+      }
+    }
+  }
+}

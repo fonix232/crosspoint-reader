@@ -12,6 +12,8 @@ HalDisplay::~HalDisplay() {}
 
 HalDisplay::Controller HalDisplay::getController() const { return BoardConfig::ACTIVE.displayController; }
 
+void HalDisplay::setReaderRendering(bool enabled) { einkDisplay.setReaderRendering(enabled); }
+
 void HalDisplay::begin(bool seamless) {
   // Set X3-specific panel mode before initializing.
   if (gpio.deviceIsX3()) {

@@ -7,6 +7,7 @@ class HalDisplay {
  public:
   using Controller = BoardConfig::DisplayController;
   Controller getController() const;
+  void setReaderRendering(bool enabled);
 
   using GrayscaleMode = freeink::GrayscaleMode;
   using GrayscaleCapabilities = freeink::GrayscaleCapabilities;

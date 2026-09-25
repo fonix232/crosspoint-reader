@@ -85,5 +85,6 @@ class ReaderActivity : public Activity {
 
   bool isReaderActivity() const final { return true; }
   bool acceptsRemoteInput() const final { return pageRendered.load(std::memory_order_acquire); }
+  bool usesReaderWaveform() const final { return true; }
   bool handleForcedRefresh() final;
 };

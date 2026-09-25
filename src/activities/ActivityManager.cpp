@@ -88,6 +88,7 @@ void ActivityManager::renderTaskLoop() {
       // The sleep screen forces normal polarity itself (SleepActivity).
       display.setInverted(SETTINGS.screenInverted != 0);
       const uint32_t renderingVisit = screenVisit;
+      display.setReaderRendering(currentActivity->usesReaderWaveform());
       currentActivity->render(std::move(lock));
       paintedVisit.store(renderingVisit, std::memory_order_release);
     }
@@ -183,6 +184,7 @@ void ActivityManager::loop() {
 
       } else {
         currentActivity = std::move(stackActivities.back());
+        display.setReaderRendering(currentActivity->usesReaderWaveform());
         stackActivities.pop_back();
         LOG_DBG("ACT", "Popped from activity stack, new size = %zu", stackActivities.size());
         // Handle result if necessary
@@ -228,6 +230,7 @@ void ActivityManager::loop() {
       ++screenVisit;
       pendingAction = PendingAction::None;
       currentActivity = std::move(pendingActivity);
+      display.setReaderRendering(currentActivity->usesReaderWaveform());
 
       lock.unlock();  // onEnter may acquire its own lock
       currentActivity->onEnter();
@@ -268,6 +271,7 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
   } else {
     // No current activity, safe to launch immediately
     currentActivity = std::move(newActivity);
+    display.setReaderRendering(currentActivity->usesReaderWaveform());
     currentActivity->onEnter();
   }
 }

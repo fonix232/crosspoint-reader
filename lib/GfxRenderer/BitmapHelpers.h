@@ -26,6 +26,15 @@ constexpr GrayPlanePixel grayPlanePixel(uint8_t level, bool msb, bool absolute) 
   return {msb ? (level == 1 || level == 2) : level == 1, false};
 }
 
+// Glyph backgrounds are transparent, unlike opaque image pixels. Keep solid
+// strokes in both absolute planes and encode AA edges with the image selectors.
+constexpr GrayPlanePixel absoluteGlyphPixel(uint8_t level, bool msb, bool blackText, bool antialias) {
+  if (level == 3) return {false, false};
+  if (!antialias) level = 0;
+  if (!blackText) level = 3 - level;
+  return grayPlanePixel(level, msb, true);
+}
+
 enum class BmpRowOrder { BottomUp, TopDown };
 
 // Populates a 1-bit BMP header in the provided memory.

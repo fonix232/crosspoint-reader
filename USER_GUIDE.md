@@ -250,6 +250,8 @@ Settings are grouped into **System**, **Display**, **Reader**, **Controls**, **L
   - "Always" - Always hide battery percentage
 
 - **Refresh Frequency**: Set how often the screen does a full refresh while reading to reduce ghosting; options are every 1, 5, 10, 15, or 30 pages.
+- **X4 Pro reader rendering**: Book pages use the tested **G (C/F blend)** waveform. Images and text share the primary grayscale pass. System screens use the original monochrome/dithered rendering and controller refresh waveforms; the experimental waveform selector is retired. Scheduled and manual cleanup remain available.
+- **X4 Pro wake cleanup**: Every boot and wake performs a full white-screen refresh before rendering the resumed screen. The saved sleep image is not repainted afterward. PaperS3 retains its no-wipe initialization.
 
 - **UI Theme**: Set which UI theme to use:
   

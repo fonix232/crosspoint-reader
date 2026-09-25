@@ -470,7 +470,6 @@ static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMod
                              const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
                              const bool pixelState, const EpdFontFamily::Style style, const int scaleNum,
                              const int scaleDen) {
-  if (renderer.grayPlanesAreAbsolute()) renderMode = GfxRenderer::BW;
   EpdGlyph solidFallback;
   const EpdGlyph* glyph = fontFamily.getGlyphMetrics(cp, solidFallback, style);
   if (!glyph) return;
@@ -530,7 +529,6 @@ template <TextRotation rotation = TextRotation::None>
 static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                            const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
                            const bool pixelState, const EpdFontFamily::Style style) {
-  if (renderer.grayPlanesAreAbsolute()) renderMode = GfxRenderer::BW;
   EpdGlyph solidFallback;
   const EpdGlyph* glyph = fontFamily.getGlyphMetrics(cp, solidFallback, style);
   if (!glyph) {
@@ -595,6 +593,27 @@ void GfxRenderer::drawGlyphBitmap(const uint8_t* bitmap, const int width, const 
   // Apply the logical clip rectangle before rotating, in glyph-local pixels.
   glyphBitmap::Clip clip{0, 0, width, height};
   glyphBitmap::clipToRect(frame, clipLeft_, clipTop_, clipRight_, clipBottom_, clip);
+
+  // Absolute reader planes need shade-aware writes.
+  // Keep the optimized bitmap path for ordinary monochrome/overlay rendering.
+  if (twoBit && grayPlanesAreAbsolute() && mode != BW) {
+    if (!bitmap) return;
+    clip.left = std::max(0, clip.left);
+    clip.top = std::max(0, clip.top);
+    clip.right = std::min(width, clip.right);
+    clip.bottom = std::min(height, clip.bottom);
+    for (int gy = clip.top; gy < clip.bottom; ++gy) {
+      for (int gx = clip.left; gx < clip.right; ++gx) {
+        const int index = gy * width + gx;
+        const int x = frame.x + gx * frame.dxX + gy * frame.dyX;
+        const int y = frame.y + gx * frame.dxY + gy * frame.dyY;
+        const uint8_t level = 3 - ((bitmap[index >> 2] >> (6 - (index & 3) * 2)) & 3);
+        const auto pixel = absoluteGlyphPixel(level, mode == GRAYSCALE_MSB, state, absoluteTextIsAntialiased());
+        if (pixel.write) drawPixel(x, y, pixel.black);
+      }
+    }
+    return;
+  }
 
   // Writes go to the framebuffer, or to the strip scratch in tiled grayscale
   // mode; getWriteOriginY()/getWriteRows() bound the rows that exist there.
@@ -2403,8 +2422,10 @@ void GfxRenderer::displayGrayscaleBase(HalDisplay::RefreshMode fallback) const {
   display.displayGrayscaleBase(fallback, fadingFix);
 }
 
-bool GfxRenderer::displayGrayscaleBase(HalDisplay::GrayscaleMode mode, HalDisplay::RefreshMode fallback) const {
+bool GfxRenderer::displayGrayscaleBase(HalDisplay::GrayscaleMode mode, HalDisplay::RefreshMode fallback,
+                                       bool textAntialiasing) const {
   absoluteGrayPlanes = false;
+  absoluteTextAntialiasing = textAntialiasing;
   if (!display.displayGrayscaleBase(mode, fallback, fadingFix)) return false;
   absoluteGrayPlanes = mode != HalDisplay::GrayscaleMode::Overlay;
   return true;
