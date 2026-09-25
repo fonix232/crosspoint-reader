@@ -147,6 +147,7 @@ unsigned long HalGPIO::getHeldTime() const { return inputMgr.getHeldTime(); }
 unsigned long HalGPIO::getPowerButtonHeldTime() const { return inputMgr.getPowerButtonHeldTime(); }
 
 bool HalGPIO::hasTouch() const { return inputMgr.hasTouch(); }
+bool HalGPIO::requiresTouchNavigation() const { return BoardConfig::requiresTouchNavigation(); }
 
 bool HalGPIO::hasHomeKey() const { return BoardConfig::hasHomeKey(); }
 

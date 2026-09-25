@@ -66,6 +66,7 @@ uint8_t CrossPointSettings::sleepTimeoutEnumToMinutes(const uint8_t legacyValue)
 
 void CrossPointSettings::toJson(JsonDocument& doc) const {
   const CrossPointSettings& s = *this;
+  if (gpio.requiresTouchNavigation()) doc["touchReaderControls"] = TOUCH_READER_ON;
 
   auto visit = [&](const SettingInfo& info) {
     if (!info.key) return;
@@ -217,6 +218,11 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       previousPageGesture = pageTurnGesture;
       needsResave = true;
     }
+  }
+
+  if (gpio.requiresTouchNavigation()) {
+    touchReaderControls = TOUCH_READER_ON;
+    if (doc["touchReaderControls"].as<uint8_t>() != TOUCH_READER_ON) needsResave = true;
   }
 
   if (doc["sleepTimeoutMinutes"].isNull() && !doc["sleepTimeout"].isNull()) {

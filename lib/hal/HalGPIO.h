@@ -86,6 +86,7 @@ class HalGPIO {
   // going through the debounced state. Cheap enough to call every few ms.
   bool rawInputActive();
   bool hasTouch() const;
+  bool requiresTouchNavigation() const;
   // Capacitive Home key reported by the touch controller (X4 Pro). The tap
   // event fires on release and excludes a long hold.
   bool hasHomeKey() const;

@@ -20,6 +20,14 @@ void HalDisplay::begin(bool seamless) {
 
   einkDisplay.begin();
 
+  if (BoardConfig::isX4Pro()) {
+    // Deep sleep loses controller state while the cover remains on the glass.
+    // Always establish a clean white panel before any UI/grayscale paint.
+    einkDisplay.clearScreen(0xFF);
+    einkDisplay.displayBuffer(EInkDisplay::FULL_REFRESH, true);
+    return;
+  }
+
   if (seamless) {
     // Defuse the SDK's X3 _x3InitialFullSyncsRemaining counter (no-op on X4)
     // so the first paint isn't promoted to FULL (~770ms). Skips the wakeup-

@@ -9,11 +9,9 @@
 
 #include <cassert>
 
+#include "HalDoubleTap.h"
+#include "HalFrontlight.h"
 #include "HalGPIO.h"
-
-#if FREEINK_DEVICE_EEGO_A4 || FREEINK_DEVICE_PICCO
-#include <HalFrontlight.h>
-#endif
 
 #if FREEINK_DEVICE_PICCO
 #include <driver/gpio.h>
@@ -88,11 +86,11 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio, const bool wakeOnHeldButton)
   Frontlight.setOn(false);
   gpio.prepareForDeepSleep();
 #endif
+  Frontlight.prepareForDeepSleep();
+
 #ifdef ENABLE_SERIAL_LOG
-  // Tear down HWCDC so the host sees a clean disconnect and the peripheral
-  // doesn't hold power domains that interfere with USB-powered GPIO wake.
-  // logSerial is the raw HWCDC reference; Serial is the MySerialImpl proxy
-  // (which doesn't expose end()).
+  // Close the active serial transport before sleeping. logSerial is the raw
+  // CDC/UART reference; the Serial logging proxy does not expose end().
   logSerial.end();
 #endif
 
@@ -152,6 +150,12 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio, const bool wakeOnHeldButton)
   // Deep sleep leaves the board, 4G modem and audio module powered, so cut
   // power instead; the button cold-boots it. Returns only on USB power.
   freeink::metalio::powerOff();
+#endif
+#if FREEINK_DEVICE_PAPERS3
+  HalDoubleTap::sleep(gpio.isUsbConnected());
+  // PMS150G resets CHIP_PU on the next button click. Keep its latch powered:
+  // cutting it here can immediately reboot on USB and undo the sleep request.
+  LOG_INF("PWR", "PaperS3 deep sleep; wake by external button reset");
 #endif
 
   if (wakeOnHeldButton) {
@@ -215,6 +219,15 @@ uint16_t HalPowerManager::getBatteryPercentage() const {
     }
     _batteryCachedPercent = percent;
     return _batteryCachedPercent;
+  }
+
+  // One reading a minute in the log, so an ADC path that reads 0 mV on a new
+  // board shows up as such rather than as a permanently empty battery.
+  static unsigned long lastBatteryLogMs = 0;
+  if (millis() - lastBatteryLogMs > 60000) {
+    lastBatteryLogMs = millis();
+    LOG_DBG("PWR", "battery ADC pin %d: %u mV -> %u%%", BoardConfig::ACTIVE.batteryAdc, battery.readMillivolts(),
+            battery.readPercentage());
   }
 
   // smooth the battery %.

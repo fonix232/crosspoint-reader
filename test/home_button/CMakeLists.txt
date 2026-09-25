@@ -1,4 +1,4 @@
-add_executable(HomeButtonInputTest HomeButtonInputTest.cpp)
+add_executable(HomeButtonInputTest HomeButtonInputTest.cpp ResetSleepPolicyTest.cpp)
 
 target_include_directories(HomeButtonInputTest PRIVATE ../../src)
 

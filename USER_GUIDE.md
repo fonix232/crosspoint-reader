@@ -797,3 +797,42 @@ Press **Ctrl-C** or close the graph window to exit.
 If the device is stuck in a bootloop, press and release the Reset button. Then, press and hold on to the configured Back button and the Power Button to boot to the Home Screen.
 
 There can be issues with broken cache or config. In this case, delete the `.crosspoint` directory on your SD card (or consider deleting only `settings.json`, `state.json`, or `epub_*` cache directories in the `.crosspoint/` folder).
+### Automatic sleep and PaperS3 power button
+
+Quick Resume on Timeout still overrides the selected Sleep Screen for inactivity sleep. Turn that option off if automatic sleep should use Cover. Choosing Quick Resume as the Sleep Screen no longer automatically changes the independent timeout option; both preferences remain explicit.
+
+PaperS3's side button is handled by its PMS150G controller, not an ESP32 GPIO. CrossPoint records whether it was awake in `/.crosspoint/state.json`. On a hardware reset, an awake flag sends the device to the selected sleep screen and clears the flag; the next reset boots normally and sets it again. Automatic and on-screen sleep also clear the flag. Software restarts and crash recovery do not trigger this toggle.
+
+CrossPoint uses ESP deep sleep for PaperS3 so a button reset can wake it without a firmware power-off pulse causing an immediate reboot on USB. Double-click hard power-off remains controlled by the PMS150G. Because hardware resets and power-on share a reset cause, powering on after hard power-off while awake may first sleep; click again to wake. A button reset discards the framebuffer, so Quick Resume and Transparent first reconstruct the reader (from its saved position) or Home before applying the normal sleep screen. Cover can render directly without opening the reader.
+
+Hardware check: with Cover selected and Quick Resume on Timeout off, test inactivity sleep on each device; with the override on, confirm the existing moon overlay still appears. Switch to Quick Resume, leave settings, reopen settings and select Cover: the separate timeout setting should keep its explicit value. On PaperS3, test boot → button reset → cover/sleep → button reset → reader, then automatic sleep → button reset → reader. Repeat on battery and USB, and verify that a BookOrbit maintenance reboot stays awake. Serial logs include `PaperS3 reset=... saved-awake=... action=...`; `paperS3Awake` in `state.json` should alternate between true while awake and false while asleep. The reset classification and sleep current still require measurement on the physical board.
+
+Hardware references: [M5Stack PaperS3 documentation](https://docs.m5stack.com/en/core/PaperS3) and [schematic](https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/517/sch_papers3_V1.0.pdf). The SDK's description of holding the button for power-off/reset is outdated; M5Stack documents double-click power-off and long-press download mode.
+
+
+### PaperS3 double-tap sleep and wake
+
+Enable **Settings → Display → Double-tap sleep / wake (experimental)** to use
+two knocks on the back/casing, normal to the screen, to sleep or wake PaperS3.
+The option is off by default and appears only on PaperS3. Taps are ignored for
+three seconds after startup/enabling, and while an activity blocks sleep or
+BookOrbit is busy. The existing sleep screen and Quick Resume frame are retained.
+Detection requires firmer knocks than the original experimental setting to
+reduce accidental sleep when placing the reader on a desk. PaperS3 display
+initialization leaves the retained image in place until the first screen update,
+without an extra blanking pass.
+
+On battery, sleep arms the BMI270 double-tap interrupt and requests power-off
+through the PMS150G; the IMU stays powered to trigger the next boot. On USB (or
+if power-off does not cut the main rail), the CPU uses light sleep and checks
+the IMU’s latched event every 200 ms, then restarts into the saved resume route.
+The physical power button remains available. Turning this option off restores
+the ordinary deep-sleep path. IMU setup/read failures also fall back to that path.
+
+Tap sensitivity, battery power-off/wake, USB wake, and standby current require
+physical-device validation; battery-life figures have not been measured.
+
+### PaperS3 USB Drive
+
+The PaperS3 file-transfer connection menu now includes **USB Drive**. Connect USB, select that mode, and wait for the SD card to appear on the computer. Background BookOrbit sync is paused before the filesystem is handed to the host. Eject the drive safely on the computer before disconnecting; the reader restarts to Home and restores its USB serial connection. This exposes the existing SPI SD card and does not require removing it. Normal builds use DIO flash with OPI PSRAM.
+

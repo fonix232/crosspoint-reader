@@ -1,0 +1,10 @@
+{
+  "name": "Bmi270Tap",
+  "version": "1.0.0",
+  "description": "Bosch BMI270 legacy feature driver for PaperS3 hardware double taps",
+  "license": "BSD-3-Clause",
+  "build": {
+    "srcDir": "vendor",
+    "includeDir": "vendor"
+  }
+}

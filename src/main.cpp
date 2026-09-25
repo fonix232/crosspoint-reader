@@ -7,6 +7,7 @@
 #include <GfxRenderer.h>
 #include <HalClock.h>
 #include <HalDisplay.h>
+#include <HalDoubleTap.h>
 #include <HalFrontlight.h>
 #include <HalGPIO.h>
 #include <HalMemory.h>
@@ -25,6 +26,7 @@
 #include <esp_heap_caps.h>
 #include <esp_wifi.h>
 #include <time.h>
+#include <esp_system.h>
 
 #include <atomic>
 #include <cstdarg>
@@ -48,6 +50,7 @@
 #include "platform/UsbSerialJtagHandoff.h"
 #include "util/ButtonNavigator.h"
 #include "util/PluginEvents.h"
+#include "util/ResetSleepPolicy.h"
 #include "util/ScreenshotUtil.h"
 #include "util/Timezones.h"
 
@@ -459,9 +462,11 @@ static bool holdSleepWhileUsbPowered() {
 #endif
 
 // Enter deep sleep mode
-void enterDeepSleep(bool fromTimeout = false) {
+void enterDeepSleep(bool fromTimeout = false, bool fromReset = false) {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
-  APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
+  if (!fromReset) APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
+  if (BoardConfig::isM5PaperS3()) APP_STATE.paperS3Awake = false;
+  LOG_INF("MAIN", "Sleep requested: %s", fromReset ? "power-button reset" : fromTimeout ? "timeout" : "user");
 
   // Sleep may end in a power-off (battery death, latch); persist the clock
   // floor now so a later cold boot resumes from it.
@@ -639,7 +644,30 @@ void setup() {
   HalSystem::checkPanic();
 
   APP_STATE.loadFromFile();
-  const bool isSleepWake = wakeupReason == HalGPIO::WakeupReason::PowerButton;
+  [[maybe_unused]] const bool tapSleepWake = HalDoubleTap::consumeWake();
+  bool paperS3ResetSleep = false;
+  bool paperS3SleepWake = false;
+#if FREEINK_DEVICE_PAPERS3
+  const auto resetReason = esp_reset_reason();
+  const auto resetCause = rebootedFromPanic ? reset_sleep::BootCause::Fault
+                          : resetReason == ESP_RST_POWERON || resetReason == ESP_RST_EXT
+                              ? reset_sleep::BootCause::External
+                          : resetReason == ESP_RST_SW ? reset_sleep::BootCause::Software
+                                                      : reset_sleep::BootCause::Other;
+  paperS3ResetSleep = reset_sleep::shouldSleep(APP_STATE.paperS3Awake, resetCause, isSilentReboot);
+  paperS3SleepWake = !APP_STATE.showBootScreen &&
+                     reset_sleep::isSleepWake(APP_STATE.paperS3Awake, resetCause, isSilentReboot, tapSleepWake);
+  LOG_INF("MAIN", "PaperS3 reset=%d saved-awake=%d action=%s", static_cast<int>(resetReason), APP_STATE.paperS3Awake,
+          paperS3ResetSleep ? "sleep" : "boot");
+  if (paperS3ResetSleep) {
+    APP_STATE.paperS3Awake = false;
+    if (!APP_STATE.saveToFile()) {
+      LOG_ERR("MAIN", "Cannot persist PaperS3 sleep flag; continuing boot");
+      paperS3ResetSleep = false;
+    }
+  }
+#endif
+  const bool isSleepWake = wakeupReason == HalGPIO::WakeupReason::PowerButton || paperS3SleepWake;
   const bool isPersistedSleepWake = isSleepWake && !APP_STATE.showBootScreen;
 
   if (recoveryFirmwareMode) {
@@ -655,6 +683,18 @@ void setup() {
     SETTINGS.readerMenuStyle = CrossPointSettings::READER_MENU_TOOLBAR;
   }
   SETTINGS.loadFromFile();
+  // Reject brief power-button wakes before restoring the light or starting
+  // background work. The Sleep short-press action also allows click-to-wake.
+  if (wakeupReason == HalGPIO::WakeupReason::PowerButton && !wakeHoldVerified &&
+      SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::SLEEP &&
+      // Picco: plugging in USB pulses the wake line; power on, as stock does.
+      !(FREEINK_DEVICE_PICCO && gpio.isUsbConnected())) {
+    LOG_DBG("MAIN", "Power-button wake not held through verification, sleeping");
+    Storage.prepareForDeepSleep();
+    powerManager.startDeepSleep(gpio);
+    return;
+  }
+  HalDoubleTap::begin(SETTINGS.paperS3DoubleTap != 0);
   // Push the saved timezone's POSIX rule into the clock (migrating the legacy
   // UTC-offset setting on first boot after the update).
   timezones::applyToClock();
@@ -692,28 +732,43 @@ void setup() {
       isSilentReboot ? silentRebootLightOn : (SETTINGS.frontlightOn != 0 && SETTINGS.frontlightRestoreOnWake != 0);
   Frontlight.begin(SETTINGS.frontlightBrightness, SETTINGS.frontlightWarmth, restoreLightOn);
 
+  if (paperS3ResetSleep) {
+    setupDisplayAndFonts(true);
+    APP_STATE.lastSleepFromReader = APP_STATE.paperS3ReaderOpen;
+    if (APP_STATE.paperS3ReaderOpen) APP_STATE.readerActivityLoadCount = 0;
+    // CHIP_PU reset discards the framebuffer. Repaint the previous activity
+    // before using a sleep mode that keeps its pixels visible.
+    if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
+        SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::TRANSPARENT_CUSTOM) {
+      if (APP_STATE.paperS3ReaderOpen && !APP_STATE.openEpubPath.empty()) {
+        activityManager.goToReader(APP_STATE.openEpubPath);
+      } else {
+        activityManager.goHome();
+      }
+      activityManager.loop();
+      activityManager.requestUpdateAndWait();
+    }
+    enterDeepSleep(false, true);
+    return;
+  }
+  if (BoardConfig::isM5PaperS3() && !APP_STATE.paperS3Awake) {
+    APP_STATE.paperS3Awake = true;
+    if (!APP_STATE.saveToFile()) LOG_ERR("MAIN", "Cannot persist PaperS3 awake flag");
+  }
+
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
-      // With Short Power Button Press = Sleep, a single click wakes on any
-      // device; otherwise the button must still be held (ghost-wake debounce).
-      // Picco: plugging in USB pulses the wake line; power on, as stock does.
-      if (!wakeHoldVerified && SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::SLEEP &&
-          !(FREEINK_DEVICE_PICCO && gpio.isUsbConnected())) {
-        LOG_DBG("MAIN", "Power-button wake not held through verification, sleeping");
-        Storage.prepareForDeepSleep();
-        powerManager.startDeepSleep(gpio);
-      }
       wakePowerReleasePending = true;
       break;
     case HalGPIO::WakeupReason::AfterUSBPower:
       // Most devices return to sleep after a USB-powered cold boot.
       LOG_DBG("MAIN", "Wakeup reason: After USB Power");
-#if FREEINK_DEVICE_X4PRO || FREEINK_DEVICE_X4CLASSIC || FREEINK_DEVICE_PAPERMONO || FREEINK_DEVICE_EEGO_A4 || \
-    FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_PICCO
+#if FREEINK_DEVICE_X4PRO || FREEINK_DEVICE_X4CLASSIC || FREEINK_DEVICE_PAPERMONO || FREEINK_DEVICE_PAPERS3 || \
+    FREEINK_DEVICE_EEGO_A4 || FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_PICCO
       // X4 Pro must stay awake so USB Serial/JTAG remains available after leaving
-      // USB Drive and reconnecting the cable. Paper Mono has no armable GPIO wake
-      // (its button is behind the PMIC). Metalio also needs native USB available
-      // after a USB-powered boot, as does the Picco. EEGO A4's post-flash reset reads as
+      // USB Drive and reconnecting the cable. Paper Mono and PaperS3 have no
+      // armable GPIO wake (their buttons sit behind a power-latch chip). Metalio
+      // also needs native USB available after a USB-powered boot, as does the Picco. EEGO A4's post-flash reset reads as
       // POWERON (native-USB), so a flash would otherwise be misclassified as a
       // USB-power cold boot and sleep. Sleeping any of these here would strand
       // the device in a USB-replug boot loop (or sleep right after a flash).
@@ -732,10 +787,8 @@ void setup() {
 
   LOG_DBG("MAIN", "Starting CrossPoint version " CROSSPOINT_VERSION);
 
-  // Resolve the single boot-presentation decision. Skipping the splash also
-  // skips the panel-clearing pass and the X3 initial-full-sync arming (see
-  // HalDisplay::begin), so the first paint is FAST_REFRESH (~500ms) over the
-  // retained frame and input dispatches against a visible UI.
+  // Splash presentation is separate from panel recovery. X4 Pro always clears
+  // during display initialization; PaperS3 retains its no-wipe initialization.
   // Only a verified deep-sleep wake may use the one-shot persisted flag.
   // Otherwise a stale flag could suppress the splash on a cold boot.
   const BootResume resume = isSilentReboot         ? BootResume::Silent
@@ -748,8 +801,7 @@ void setup() {
 
   switch (resume) {
     case BootResume::Silent:
-      // Splash skipped: the routing block below picks the target activity; the
-      // panel keeps showing the pre-reboot popup until that first paint lands.
+      // Splash skipped: the routing block below picks the target activity.
       break;
     case BootResume::SplashlessWake:
       // One-shot flag: re-arm the splash for the next ordinary boot. Save
@@ -757,6 +809,12 @@ void setup() {
       // us in a splashless-with-no-frame loop on the next boot.
       APP_STATE.showBootScreen = true;
       APP_STATE.saveToFile();
+      if (BoardConfig::isX4Pro()) {
+        // The physical full refresh already removed the cover. Render the
+        // resumed activity directly instead of repainting the saved sleep frame.
+        allowFastInitialReaderRefresh = true;
+        break;
+      }
       if (Storage.exists(SLEEP_FRAME_FILE) && loadSleepFrameBuffer()) {
         if (gpio.deviceIsX3()) {
           // begin() clears the X3 controller RAM, so restore the saved frame as
@@ -991,6 +1049,13 @@ void loop() {
     lastX4ProPowerClickAt = 0;
     enterDeepSleep();
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
+    return;
+  }
+
+  if (HalDoubleTap::poll(SETTINGS.paperS3DoubleTap != 0) && millis() >= allowSleepAt &&
+      !activityManager.preventAutoSleep()) {
+    LOG_INF("MAIN", "Double tap, sleeping");
+    enterDeepSleep();
     return;
   }
 

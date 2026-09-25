@@ -55,7 +55,7 @@ bool HalStorage::beginUsbDrive() {
   StorageLock lock;
   auto* const blockDevice = SDCard.detachFilesystemForRawAccess();
   if (!blockDevice) {
-    LOG_ERR("USB", "USB Drive requires a mounted SD filesystem");
+    LOG_ERR("USB", "USB Drive requires a mounted, synchronized SD filesystem");
     return false;
   }
 

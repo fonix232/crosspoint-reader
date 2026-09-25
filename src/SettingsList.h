@@ -3,6 +3,7 @@
 #include <BoardConfig.h>
 #include <HalClock.h>
 #include <HalFrontlight.h>
+#include <HalGPIO.h>
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <SdCardFontRegistry.h>
@@ -291,6 +292,11 @@ std::vector<SettingInfo> getBaseSettingsList(size_t extraCapacity = 0);
 inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* registry = nullptr,
                                                 const std::vector<DictionaryEntry>* dictionaries = nullptr) {
   auto v = getBaseSettingsList(dictionaries && !dictionaries->empty() ? 1 : 0);
+  if (gpio.requiresTouchNavigation()) {
+    v.erase(std::remove_if(v.begin(), v.end(),
+                           [](const SettingInfo& s) { return s.nameId == StrId::STR_TOUCH_READER_CONTROLS; }),
+            v.end());
+  }
   // Frontlit and lightless variants of a board share one binary (EEGO A4);
   // presence is the I2C probe result from Frontlight.begin(). UI-only: the probe
   // has not run at load time, so the base list must keep the persisted key.

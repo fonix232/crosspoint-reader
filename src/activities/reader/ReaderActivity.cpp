@@ -1,5 +1,6 @@
 #include "ReaderActivity.h"
 
+#include <BoardConfig.h>
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
@@ -88,6 +89,7 @@ void ReaderActivity::rememberBookOnceRendered() {
   if (bookRemembered || !pageRendered.load(std::memory_order_acquire)) return;
   bookRemembered = true;
   APP_STATE.openEpubPath = bookPath;
+  if (BoardConfig::isM5PaperS3()) APP_STATE.paperS3ReaderOpen = true;
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(bookPath, getBookTitle(), getBookAuthor(), getBookThumbBmpPath());
   const pluginevents::Var openVars[] = {{"book", bookPath.c_str()}};
@@ -117,6 +119,7 @@ void ReaderActivity::onExit() {
 
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   APP_STATE.readerActivityLoadCount = 0;
+  if (BoardConfig::isM5PaperS3()) APP_STATE.paperS3ReaderOpen = false;
   APP_STATE.saveToFile();
 
   endOfBookOptions.reset();

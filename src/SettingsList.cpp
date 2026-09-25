@@ -32,6 +32,9 @@ void forEachBaseSetting(SettingVisitor visit, void* context) {
 
   const auto emit = [visit, context](auto&& info) { visit(context, info); };
   // --- Display ---
+  if (BoardConfig::isM5PaperS3())
+    emit(SettingInfo::Toggle(StrId::STR_DOUBLE_TAP_SLEEP, &CrossPointSettings::paperS3DoubleTap, "paperS3DoubleTap",
+                             StrId::STR_CAT_DISPLAY));
   emit(SettingInfo::StaticEnum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen, SLEEP_SCREEN_VALUES,
                                "sleepScreen", StrId::STR_CAT_DISPLAY));
   emit(SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
