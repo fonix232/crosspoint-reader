@@ -5,6 +5,9 @@
 #include <limits>
 
 namespace serialization {
+// Cache strings are metadata, paths or individual words, never whole chapters.
+// Bound allocations even when a corrupt length still fits inside a large file.
+inline constexpr uint32_t MAX_STRING_BYTES = 16 * 1024;
 template <typename T>
 void writePod(std::ostream& os, const T& value) {
   os.write(reinterpret_cast<const char*>(&value), sizeof(T));
@@ -21,13 +24,23 @@ bool tryWritePod(HalFile& file, const T& value) {
 }
 
 template <typename T>
-void readPod(std::istream& is, T& value) {
-  is.read(reinterpret_cast<char*>(&value), sizeof(T));
+bool readPod(std::istream& is, T& value) {
+  value = T{};
+  if (!is.read(reinterpret_cast<char*>(&value), sizeof(T))) {
+    value = T{};
+    return false;
+  }
+  return true;
 }
 
 template <typename T>
-void readPod(HalFile& file, T& value) {
-  file.read(reinterpret_cast<uint8_t*>(&value), sizeof(T));
+bool readPod(HalFile& file, T& value) {
+  value = T{};
+  if (file.read(reinterpret_cast<uint8_t*>(&value), sizeof(T)) != sizeof(T)) {
+    value = T{};
+    return false;
+  }
+  return true;
 }
 
 template <typename T>
@@ -52,18 +65,31 @@ inline bool tryWriteString(HalFile& file, const std::string& s) {
   return tryWritePod(file, len) && (len == 0 || file.write(reinterpret_cast<const uint8_t*>(s.data()), len) == len);
 }
 
-inline void readString(std::istream& is, std::string& s) {
-  uint32_t len;
-  readPod(is, len);
+inline bool readString(std::istream& is, std::string& s) {
+  s.clear();
+  uint32_t len = 0;
+  if (!readPod(is, len) || len > MAX_STRING_BYTES) return false;
   s.resize(len);
-  is.read(&s[0], len);
+  if (len && !is.read(&s[0], len)) {
+    s.clear();
+    return false;
+  }
+  return true;
 }
 
-inline void readString(HalFile& file, std::string& s) {
-  uint32_t len;
-  readPod(file, len);
+inline bool readString(HalFile& file, std::string& s) {
+  s.clear();
+  uint32_t len = 0;
+  if (!readPod(file, len) || len > MAX_STRING_BYTES) return false;
+  const auto pos = file.position();
+  const auto size = file.size();
+  if (pos > size || len > size - pos) return false;
   s.resize(len);
-  file.read(&s[0], len);
+  if (len && file.read(&s[0], len) != static_cast<int>(len)) {
+    s.clear();
+    return false;
+  }
+  return true;
 }
 
 inline bool tryReadString(HalFile& file, std::string& s, const size_t maxLength) {

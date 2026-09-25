@@ -94,6 +94,9 @@ class BookMetadataCache {
     return hash;
   }
 
+  void invalidateReadCache();
+  bool seekReadEntry(uint32_t index, uint32_t& pos);
+
   uint32_t writeSpineEntry(HalFile& file, const SpineEntry& entry) const;
   uint32_t writeTocEntry(HalFile& file, const TocEntry& entry) const;
   SpineEntry readSpineEntry(HalFile& file) const;

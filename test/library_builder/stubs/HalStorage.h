@@ -144,6 +144,7 @@ class HalFile {
   uint32_t modificationTime() const { return node ? node->time : 0; }
   uint64_t fileSize64() const { return node ? node->bytes.size() : 0; }
   size_t fileSize() const { return static_cast<size_t>(fileSize64()); }
+  size_t size() const { return fileSize(); }
   size_t position() const { return pos; }
   bool seekSet(const size_t offset) {
     fake::seeks++;

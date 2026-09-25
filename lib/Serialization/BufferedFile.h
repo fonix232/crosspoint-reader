@@ -1,6 +1,7 @@
 #pragma once
 #include <HalStorage.h>
 #include <Memory.h>
+#include <Serialization.h>
 
 #include <algorithm>
 #include <cstring>
@@ -107,6 +108,8 @@ class BufferedFileReader {
     return total;
   }
 
+  size_t size() { return file.size(); }
+
   // Logical read position.
   size_t position() const { return bufStart + off; }
 
@@ -139,8 +142,13 @@ void writePod(BufferedFileWriter& out, const T& value) {
 }
 
 template <typename T>
-void readPod(BufferedFileReader& in, T& value) {
-  in.read(&value, sizeof(T));
+bool readPod(BufferedFileReader& in, T& value) {
+  value = T{};
+  if (in.read(&value, sizeof(T)) != sizeof(T)) {
+    value = T{};
+    return false;
+  }
+  return true;
 }
 
 inline void writeString(BufferedFileWriter& out, const std::string& s) {
@@ -149,13 +157,19 @@ inline void writeString(BufferedFileWriter& out, const std::string& s) {
   out.write(s.data(), len);
 }
 
-inline void readString(BufferedFileReader& in, std::string& s) {
-  uint32_t len;
-  readPod(in, len);
+inline bool readString(BufferedFileReader& in, std::string& s) {
+  s.clear();
+  uint32_t len = 0;
+  if (!readPod(in, len) || len > MAX_STRING_BYTES) return false;
+  const auto pos = in.position();
+  const auto size = in.size();
+  if (pos > size || len > size - pos) return false;
   s.resize(len);
-  if (len > 0) {
-    in.read(&s[0], len);
+  if (len && in.read(&s[0], len) != len) {
+    s.clear();
+    return false;
   }
+  return true;
 }
 
 }  // namespace serialization
