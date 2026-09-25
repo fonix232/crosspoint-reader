@@ -50,6 +50,8 @@
 #include "bookorbit/BookOrbitAgent.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "network/UsbFirmwareProtocol.h"
+#include "network/UsbFirmwareUpdate.h"
 #include "platform/UsbSerialJtagHandoff.h"
 #include "util/ButtonNavigator.h"
 #include "util/PluginEvents.h"
@@ -584,6 +586,11 @@ void setupDisplayAndFonts(bool seamless = false) {
 
 void setup() {
   BoardConfig::holdPowerRails();
+#if ARDUINO_USB_CDC_ON_BOOT && !ARDUINO_USB_MODE
+  // Opening a diagnostic console must not reboot into a disabled ROM loader.
+  logSerial.enableReboot(false);
+  logSerial.setTxTimeoutMs(1);
+#endif
 
 #ifdef ENABLE_SERIAL_LOG
 #ifdef CROSSPOINT_WAIT_FOR_USB_SERIAL
@@ -788,7 +795,7 @@ void setup() {
       LOG_DBG("MAIN", "Wakeup reason: After USB Power");
 #if FREEINK_DEVICE_X4PRO || FREEINK_DEVICE_X4CLASSIC || FREEINK_DEVICE_PAPERMONO || FREEINK_DEVICE_PAPERS3 || \
     FREEINK_DEVICE_EEGO_A4 || FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_PICCO
-      // X4 Pro must stay awake so USB Serial/JTAG remains available after leaving
+      // X4 Pro must stay awake so USB serial remains available after leaving
       // USB Drive and reconnecting the cable. Paper Mono and PaperS3 have no
       // armable GPIO wake (their buttons sit behind a power-latch chip). Metalio
       // also needs native USB available after a USB-powered boot, as does the Picco. EEGO A4's post-flash reset reads as
@@ -945,6 +952,20 @@ void loop() {
   scene.storageBusy = activityManager.requiresExclusiveStorageLoop();
   scene.wifiOn = WiFi.getMode() != WIFI_MODE_NULL;
   const bool remoteActed = bleturner::tick(scene);
+  static usb_firmware::CommandLine serialCommand;
+  while (logSerial.available() > 0) {
+    const char* command = serialCommand.feed(logSerial.read());
+    if (!command) continue;
+    if (usb_firmware::handleCommand(command)) return;
+    if (strcmp(command, "CMD:SCREENSHOT") == 0 && !activityManager.requiresExclusiveStorageLoop()) {
+      RenderLock lock;
+      const uint32_t bufferSize = display.getBufferSize();
+      logSerial.printf("SCREENSHOT_START:%d\n", bufferSize);
+      logSerial.write(display.getFrameBuffer(), bufferSize);
+      logSerial.printf("SCREENSHOT_END\n");
+    }
+    break;
+  }
 
   if (activityManager.requiresExclusiveStorageLoop()) {
     // USB Drive handed the raw SD card to the host. Do not run screenshots,
@@ -986,23 +1007,6 @@ void loop() {
             psram.freeBytes, psram.totalBytes, psram.minFreeBytes, psram.largestBlockBytes);
 #endif
     lastMemPrint = millis();
-  }
-
-  // Handle incoming serial commands,
-  // nb: we use logSerial from logging to avoid deprecation warnings
-  if (logSerial.available() > 0) {
-    String line = logSerial.readStringUntil('\n');
-    if (line.startsWith("CMD:")) {
-      String cmd = line.substring(4);
-      cmd.trim();
-      if (cmd == "SCREENSHOT") {
-        const uint32_t bufferSize = display.getBufferSize();
-        logSerial.printf("SCREENSHOT_START:%d\n", bufferSize);
-        uint8_t* buf = display.getFrameBuffer();
-        logSerial.write(buf, bufferSize);
-        logSerial.printf("SCREENSHOT_END\n");
-      }
-    }
   }
 
   // Check for any user activity (button press or release) or active background work

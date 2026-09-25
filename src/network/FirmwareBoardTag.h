@@ -31,6 +31,8 @@ size_t boardNameLen();
 class Scanner {
  public:
   void feed(const uint8_t* data, size_t len);
+  // USB updates require a complete matching tag; other update paths may accept untagged images.
+  bool hasTag() const { return tagFound; }
   // True once a tag naming a different board has been seen. Valid mid-stream:
   // callers may abort a download as soon as this turns true.
   bool mismatch() const { return mismatchFound; }
@@ -44,6 +46,7 @@ class Scanner {
   size_t magicMatched = 0;
   bool capturing = false;
   bool mismatchFound = false;
+  bool tagFound = false;
 };
 
 }  // namespace board_tag

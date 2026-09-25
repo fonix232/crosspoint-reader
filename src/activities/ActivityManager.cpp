@@ -440,6 +440,10 @@ bool ActivityManager::requiresExclusiveStorageLoop() const {
   return currentActivity && currentActivity->requiresExclusiveStorageLoop();
 }
 
+bool ActivityManager::isHomeActivity() const {
+  return currentActivity && currentActivity->name == "Home" && pendingAction == PendingAction::None;
+}
+
 bool ActivityManager::isReaderActivity() const {
   return std::any_of(stackActivities.begin(), stackActivities.end(),
                      [](const auto& activity) { return activity->isReaderActivity(); }) ||

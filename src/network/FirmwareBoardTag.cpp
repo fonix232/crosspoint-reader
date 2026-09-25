@@ -17,6 +17,8 @@
 #define CROSSPOINT_BOARD_NAME "x4"
 #elif FREEINK_DEVICE_PAPERMONO
 #define CROSSPOINT_BOARD_NAME "papermono"
+#elif FREEINK_DEVICE_PAPERS3
+#define CROSSPOINT_BOARD_NAME "papers3"
 #elif FREEINK_DEVICE_STICKY
 #define CROSSPOINT_BOARD_NAME "sticky"
 #elif FREEINK_DEVICE_M5PAPER
@@ -58,6 +60,7 @@ void Scanner::feed(const uint8_t* data, size_t len) {
     const char c = static_cast<char>(data[i]);
     if (capturing) {
       if (c == ';') {
+        tagFound = true;
         capturing = false;
         captured[nameLen] = '\0';
         if (nameLen != boardNameLen() || memcmp(captured, boardName(), nameLen) != 0) {

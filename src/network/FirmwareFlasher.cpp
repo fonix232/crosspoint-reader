@@ -341,6 +341,17 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
       file.close();
       return Result::WRITE_FAIL;
     }
+    // Verify flash before changing the boot selection. Keep the readback buffer
+    // small enough for the main task stack used by USB updates.
+    uint8_t readback[128];
+    for (size_t offset = 0; offset < want; offset += sizeof(readback)) {
+      const size_t count = std::min(sizeof(readback), want - offset);
+      if (esp_partition_read(dest, streamPos + offset, readback, count) != ESP_OK ||
+          std::memcmp(readback, buffer.get() + offset, count) != 0) {
+        LOG_ERR("FLASH", "readback mismatch @%u", static_cast<unsigned>(streamPos + offset));
+        return Result::WRITE_FAIL;
+      }
+    }
     streamPos += want;
     if (onProgress) onProgress(streamPos, firmwareSize, ctx);
     delay(1);

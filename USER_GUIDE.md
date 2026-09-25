@@ -164,6 +164,20 @@ A **Wi-Fi signal strength indicator** (dBm) is displayed on-screen during joined
 > [!TIP]
 > If your EPUBs have compatibility issues, you can run the built-in **EPUB Optimizer** directly from the device to clean up and reprocess books for better rendering.
 
+On the X4 Pro, USB also provides a serial console whenever the reader is awake, including during USB Drive transfers. Open the CrossPoint USB serial port at 115200 baud to view logs. Opening the port does not reboot the reader. The console disconnects during sleep and reconnects after wake; firmware updates can use the SD updater or the USB uploader described below. The SD card becomes accessible to your computer only after entering USB Drive mode.
+
+#### X4 Pro USB firmware updates
+
+After installing firmware with USB-updater support once through the SD updater, return the reader to **Home**, connect USB, and run:
+
+```sh
+python3 scripts/usb_firmware_upload.py .pio/build/x4pro/firmware.bin
+```
+
+The script requires `pyserial` (included in `scripts/requirements.txt`). It discovers the X4 Pro automatically; use `--port PORT` if more than one is connected. Use `--probe` to check support, or `--verify-only` with an image to upload and validate without flashing.
+
+Keep the reader awake at Home and exit USB Drive before uploading. The updater requires a writable SD card with space for the image. It checks the transfer hash and X4 Pro image identity, validates the firmware, verifies flash writes, and reboots. The script reconnects and checks the running image hash. Failed or cancelled transfers leave the current firmware selected. This uses the running CrossPoint firmware and does not restore ROM-loader recovery or JTAG.
+
 ### 3.5.1 Calibre Wireless Transfers
 
 CrossPoint supports sending books from Calibre using the CrossPoint Reader device plugin.
