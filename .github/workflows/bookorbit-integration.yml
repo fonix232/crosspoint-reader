@@ -1,0 +1,41 @@
+name: BookOrbit integration
+on:
+  pull_request:
+    paths:
+      - 'lib/BookOrbit/**'
+      - 'lib/JsonParser/**'
+      - 'src/bookorbit/**'
+      - 'test/bookorbit_data/**'
+      - 'test/integration/**'
+      - '.github/workflows/bookorbit-integration.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  server-exchanges:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Build firmware protocol and storage tests
+        run: |
+          cmake -S test -B build/test
+          cmake --build build/test --target BookOrbitProtocolProbe BookOrbitDataTest BookOrbitDataStoreTest -j2
+          ctest --test-dir build/test -R 'BookOrbitData' --output-on-failure
+      - name: Start isolated BookOrbit
+        run: docker compose --env-file test/integration/test.env -f test/integration/docker-compose.yml up -d --wait
+      - name: Seed and exercise two devices
+        run: |
+          python3 test/integration/seed/seed.py
+          python3 test/integration/run.py
+      - name: Server logs
+        if: failure()
+        run: docker compose --env-file test/integration/test.env -f test/integration/docker-compose.yml logs --no-color --tail=150
+      - name: Remove disposable server and data
+        if: always()
+        run: docker compose --env-file test/integration/test.env -f test/integration/docker-compose.yml down -v

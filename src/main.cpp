@@ -32,6 +32,8 @@
 #include <cstdarg>
 #include <cstring>
 
+#include "BookOrbitCredentialStore.h"
+#include "BookOrbitSession.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "KOReaderCredentialStore.h"
@@ -45,12 +47,14 @@
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
+#include "bookorbit/BookOrbitAgent.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "platform/UsbSerialJtagHandoff.h"
 #include "util/ButtonNavigator.h"
 #include "util/PluginEvents.h"
 #include "util/ResetSleepPolicy.h"
+#include "util/ScreenMetrics.h"
 #include "util/ScreenshotUtil.h"
 #include "util/Timezones.h"
 
@@ -131,7 +135,10 @@ constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_REBOOT_TARGET_SETTINGS = 2;
 constexpr uint32_t SILENT_REBOOT_TARGET_JOIN_NETWORK = 3;
-constexpr uint32_t SILENT_REBOOT_TARGET_MAX = SILENT_REBOOT_TARGET_JOIN_NETWORK;
+constexpr uint32_t SILENT_REBOOT_TARGET_LIBRARY = 4;
+constexpr uint32_t SILENT_REBOOT_TARGET_BOOKORBIT_SETTINGS = 5;
+constexpr uint32_t SILENT_REBOOT_TARGET_BOOKORBIT_INSIGHTS = 6;
+constexpr uint32_t SILENT_REBOOT_TARGET_MAX = SILENT_REBOOT_TARGET_BOOKORBIT_INSIGHTS;
 constexpr uint32_t SILENT_REBOOT_LIGHT_ON = 1U << 0;
 
 // How the device is coming back to life, resolved once at boot. Both resume
@@ -198,6 +205,16 @@ void silentRestartToJoinNetwork() {
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
+}
+
+void silentRestartToLibrary() { silentRestartTo(SILENT_REBOOT_TARGET_LIBRARY, "library"); }
+
+void silentRestartToBookOrbitSettings() {
+  silentRestartTo(SILENT_REBOOT_TARGET_BOOKORBIT_SETTINGS, "bookorbit settings");
+}
+
+void silentRestartToBookOrbitInsights() {
+  silentRestartTo(SILENT_REBOOT_TARGET_BOOKORBIT_INSIGHTS, "bookorbit insights");
 }
 
 void restartToHomeAfterStorageHandoff() {
@@ -497,6 +514,9 @@ void enterDeepSleep(bool fromTimeout = false, bool fromReset = false) {
     Storage.remove(SLEEP_FRAME_FILE);
   }
 
+  // A background BookOrbit job must not be cut mid-transfer under the radio.
+  BOOKORBIT_AGENT.prepareForSleep();
+
   // Tear down WiFi so the modem power domain isn't held alive across deep sleep.
   // Wake from deep sleep is effectively a chip reset, so no state needs to survive.
   if (WiFi.getMode() != WIFI_MODE_NULL) {
@@ -701,6 +721,8 @@ void setup() {
   RECENT_BOOKS.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
+  BOOKORBIT_STORE.loadFromFile();
+  bookorbit::Session::setDeviceCoverSize(screen_metrics::gridCoverWidth(), screen_metrics::gridCoverHeight());
   OPDS_STORE.loadFromFile();
   OPDS_TOKENS.loadFromFile();
   LCP_PASSPHRASES.loadFromFile();
@@ -755,6 +777,7 @@ void setup() {
     APP_STATE.paperS3Awake = true;
     if (!APP_STATE.saveToFile()) LOG_ERR("MAIN", "Cannot persist PaperS3 awake flag");
   }
+  BOOKORBIT_AGENT.begin(renderer);
 
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
@@ -852,6 +875,15 @@ void setup() {
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_SETTINGS) {
     // Back out of the WiFi rows and the user is where they left off, not on Home.
     activityManager.goToSettings(SettingsSection::Network);
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_LIBRARY) {
+    // A BookOrbit network session ended; land back on the Library it came from.
+    activityManager.goToLibrary();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_BOOKORBIT_SETTINGS) {
+    // A connection test or manual sync started from the BookOrbit settings screen.
+    activityManager.goToBookOrbitSettings();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_BOOKORBIT_INSIGHTS) {
+    // A refresh started from the Reading insights screen.
+    activityManager.goToBookOrbitInsights();
   } else if (resume == BootResume::Silent) {
     // target == home (or reader with no open book): land on home — don't fall
     // through to the sleep-wake "resume reader" logic, which fires on stale
@@ -976,7 +1008,7 @@ void loop() {
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();
   if (gpio.wasAnyPressed() || gpio.wasAnyReleased() || gpio.wasTouchActivity() || halTiltSensor.hadActivity() ||
-      remoteActed || activityManager.preventAutoSleep()) {
+      remoteActed || activityManager.preventAutoSleep() || BOOKORBIT_AGENT.busy()) {
     lastActivityTime = millis();         // Reset inactivity timer
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
   }
@@ -1053,7 +1085,7 @@ void loop() {
   }
 
   if (HalDoubleTap::poll(SETTINGS.paperS3DoubleTap != 0) && millis() >= allowSleepAt &&
-      !activityManager.preventAutoSleep()) {
+      !activityManager.preventAutoSleep() && !BOOKORBIT_AGENT.busy()) {
     LOG_INF("MAIN", "Double tap, sleeping");
     enterDeepSleep();
     return;
@@ -1130,6 +1162,7 @@ void loop() {
 
   const unsigned long activityStartTime = millis();
   activityManager.loop();
+  BOOKORBIT_AGENT.loop();
   const unsigned long activityDuration = millis() - activityStartTime;
 
   const unsigned long loopDuration = millis() - loopStartTime;

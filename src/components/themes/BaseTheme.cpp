@@ -649,7 +649,7 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
     }
 
     // Vertically center the title block within the card
-    int titleYStart = bookY + (bookHeight - totalTextHeight) / 2;
+    int titleYStart = bookY + (bookHeight - readingDetailsHeight(renderer) - totalTextHeight) / 2;
 
     const auto truncatedAuthor = lastBookAuthor.empty()
                                      ? std::string{}
@@ -694,23 +694,10 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
       renderer.drawCenteredText(UI_10_FONT_ID, titleYStart, truncatedAuthor.c_str(), !bookSelected);
     }
 
-    // "Continue Reading" label at the bottom
-    const int continueY = bookY + bookHeight - renderer.getLineHeight(UI_10_FONT_ID) * 3 / 2;
-    if (coverRendered) {
-      // Draw box behind "Continue Reading" text (inverted when selected: black box instead of white)
-      const char* continueText = tr(STR_CONTINUE_READING);
-      const int continueTextWidth = renderer.getTextWidth(UI_10_FONT_ID, continueText);
-      constexpr int continuePadding = 6;
-      const int continueBoxWidth = continueTextWidth + continuePadding * 2;
-      const int continueBoxHeight = renderer.getLineHeight(UI_10_FONT_ID) + continuePadding;
-      const int continueBoxX = rect.x + (rect.width - continueBoxWidth) / 2;
-      const int continueBoxY = continueY - continuePadding / 2;
-      renderer.fillRect(continueBoxX, continueBoxY, continueBoxWidth, continueBoxHeight, bookSelected);
-      renderer.drawRect(continueBoxX, continueBoxY, continueBoxWidth, continueBoxHeight, !bookSelected);
-      renderer.drawCenteredText(UI_10_FONT_ID, continueY, continueText, !bookSelected);
-    } else {
-      renderer.drawCenteredText(UI_10_FONT_ID, continueY, tr(STR_CONTINUE_READING), !bookSelected);
-    }
+    const int detailsHeight = readingDetailsHeight(renderer);
+    drawReadingDetails(renderer, Rect{bookX + 6, bookY + bookHeight - detailsHeight - 6, bookWidth - 12, detailsHeight},
+                       recentBooks[0]);
+
   } else {
     // No book to continue reading
     const int y =
@@ -721,6 +708,24 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 }
 
 int BaseTheme::getMenuRowHeight(const GfxRenderer&) const { return UITheme::getInstance().getMetrics().menuRowHeight; }
+
+void BaseTheme::drawMenuLabel(GfxRenderer& renderer, Rect rect, const std::string& label, int fontId, bool centered,
+                              bool black, EpdFontFamily::Style style) {
+  const auto split = label.find('\n');
+  const bool hasDetail = split != std::string::npos;
+  const auto title = renderer.truncatedText(fontId, label.substr(0, split).c_str(), rect.width, style);
+  const int titleHeight = hasDetail ? renderer.getTextHeight(fontId) : renderer.getLineHeight(fontId);
+  const int detailHeight = hasDetail ? 2 + renderer.getLineHeight(SMALL_FONT_ID) : 0;
+  const int y = rect.y + std::max(0, (rect.height - titleHeight - detailHeight) / 2);
+  const int x = rect.x + (centered ? (rect.width - renderer.getTextWidth(fontId, title.c_str(), style)) / 2 : 0);
+  renderer.drawText(fontId, x, y, title.c_str(), black, style);
+  if (hasDetail) {
+    const auto detail = renderer.truncatedText(SMALL_FONT_ID, label.c_str() + split + 1, rect.width);
+    const int detailX =
+        rect.x + (centered ? (rect.width - renderer.getTextWidth(SMALL_FONT_ID, detail.c_str())) / 2 : 0);
+    renderer.drawText(SMALL_FONT_ID, detailX, y + titleHeight + 2, detail.c_str(), black);
+  }
+}
 
 void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
@@ -739,15 +744,10 @@ void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
                         rect.width - BaseMetrics::values.contentSidePadding * 2, BaseMetrics::values.menuRowHeight);
     }
 
-    std::string labelStr = buttonLabel(i);
-    const char* label = labelStr.c_str();
-    const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, label);
-    const int textX = rect.x + (rect.width - textWidth) / 2;
-    const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-    const int textY =
-        tileY + (BaseMetrics::values.menuRowHeight - lineHeight) / 2;  // vertically centered assuming y is top of text
-    // Invert text when the tile is selected, to contrast with the filled background
-    renderer.drawText(UI_10_FONT_ID, textX, textY, label, selectedIndex != i);
+    drawMenuLabel(renderer,
+                  Rect{rect.x + BaseMetrics::values.contentSidePadding + 8, tileY,
+                       rect.width - BaseMetrics::values.contentSidePadding * 2 - 16, BaseMetrics::values.menuRowHeight},
+                  buttonLabel(i), UI_10_FONT_ID, true, !selected);
   }
 }
 
@@ -999,4 +999,62 @@ void BaseTheme::drawSelectionActions(const GfxRenderer& renderer, const Rect rec
     UITheme::drawCenteredWrappedText(renderer, button, uiScaleSpec().smallFontId, labels[i], 2, true,
                                      EpdFontFamily::REGULAR, UITheme::TextVerticalAlignment::CENTER);
   }
+}
+
+int BaseTheme::readingDetailsHeight(const GfxRenderer& renderer) {
+  return renderer.getLineHeight(SMALL_FONT_ID) * 3 + 22;
+}
+
+void BaseTheme::drawReadingDetails(GfxRenderer& renderer, Rect rect, const RecentBook& book) {
+  if (rect.width < 40 || rect.height < readingDetailsHeight(renderer)) return;
+  const auto& details = book.reading;
+  const int line = renderer.getLineHeight(SMALL_FONT_ID);
+  const int x = rect.x + 8;
+  const int width = rect.width - 16;
+  int y = rect.y + 6;
+  renderer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, 6, Color::White);
+  char progress[32];
+  if (details.percent >= 0)
+    snprintf(progress, sizeof(progress), tr(STR_HOME_PROGRESS), static_cast<unsigned>(details.percent));
+  else
+    snprintf(progress, sizeof(progress), "%s", tr(STR_HOME_PROGRESS_UNKNOWN));
+  auto label = renderer.truncatedText(SMALL_FONT_ID, progress, width);
+  renderer.drawText(SMALL_FONT_ID, x, y, label.c_str(), true, EpdFontFamily::BOLD);
+  y += line + 2;
+  renderer.drawRect(x, y, width, 6, true);
+  if (details.percent > 0) renderer.fillRect(x + 1, y + 1, (width - 2) * details.percent / 100, 4, true);
+  y += 10;
+  if (details.chapter[0]) {
+    label = renderer.truncatedText(SMALL_FONT_ID, details.chapter, width);
+    renderer.drawText(SMALL_FONT_ID, x, y, label.c_str(), true);
+  }
+  y += line;
+  const char* status = tr(STR_HOME_SYNC_LOCAL);
+  switch (details.sync) {
+    case ReadingCardSync::Disabled:
+      status = tr(STR_HOME_SYNC_OFF);
+      break;
+    case ReadingCardSync::Pending:
+      status = tr(STR_HOME_SYNC_PENDING);
+      break;
+    case ReadingCardSync::Synced:
+      status = tr(STR_HOME_SYNCED);
+      break;
+    case ReadingCardSync::Conflict:
+      status = tr(STR_HOME_SYNC_CONFLICT);
+      break;
+    case ReadingCardSync::Failed:
+      status = tr(STR_HOME_SYNC_FAILED);
+      break;
+    case ReadingCardSync::Syncing:
+      status = tr(STR_BOOKORBIT_SYNCING);
+      break;
+    case ReadingCardSync::Unknown:
+      status = tr(STR_HOME_SYNC_UNKNOWN);
+      break;
+    default:
+      break;
+  }
+  label = renderer.truncatedText(SMALL_FONT_ID, status, width);
+  renderer.drawText(SMALL_FONT_ID, x, y, label.c_str(), true);
 }

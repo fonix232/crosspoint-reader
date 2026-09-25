@@ -359,7 +359,16 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Show the title and author read from inside each book rather than its
   // filename. Users can disable this to make index rebuilds skip EPUB parsing.
   uint8_t libraryUseMetadata = 1;
+  // Keep the background worker connection for wifiIdleMinutes() after network
+  // work; otherwise switch it off immediately. Never initiates a connection.
+  uint8_t keepWifiOn = 0;
   uint8_t paperS3DoubleTap = 0;
+  uint8_t wifiIdleTimeout = 1;  // index into WIFI_IDLE_MINUTES
+  static constexpr uint8_t WIFI_IDLE_MINUTES[] = {2, 5, 10, 15, 30};
+  uint8_t wifiIdleMinutes() const { return WIFI_IDLE_MINUTES[wifiIdleTimeout < 5 ? wifiIdleTimeout : 1]; }
+  // Library presentation: LIBRARY_VIEW_LIST rows, LIBRARY_VIEW_GRID covers.
+  enum LIBRARY_VIEW : uint8_t { LIBRARY_VIEW_LIST = 0, LIBRARY_VIEW_GRID = 1 };
+  uint8_t libraryViewMode = LIBRARY_VIEW_LIST;
   // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)
   uint8_t removeReadBooksFromRecents = 0;
   // Move epub to /Read/ folder on SD card when finished (0 = disabled, 1 = enabled)

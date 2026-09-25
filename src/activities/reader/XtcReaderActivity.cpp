@@ -5,11 +5,11 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Memory.h>
+#include <ProgressFile.h>
 
 #include <algorithm>
 
 #include "CrossPointSettings.h"
-#include "ProgressFile.h"
 #include "ReaderActivity.h"
 #include "ReaderUtils.h"
 #include "XtcReaderChapterSelectionActivity.h"

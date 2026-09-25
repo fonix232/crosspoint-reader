@@ -34,6 +34,10 @@ class HalClock {
   // Returns false if RTC is not available.
   bool localTime(struct tm& out) const;
 
+  // Current RTC time as Unix seconds (UTC). Returns false if the RTC is not
+  // available or has never been read successfully.
+  bool utcNow(time_t& out) const;
+
   // Get current local hour (0-23) and minute (0-59).
   // Returns false if RTC is not available.
   bool getTime(uint8_t& hour, uint8_t& minute) const;

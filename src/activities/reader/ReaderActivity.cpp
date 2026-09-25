@@ -1,6 +1,7 @@
 #include "ReaderActivity.h"
 
 #include <BoardConfig.h>
+#include <BookOrbitReadingTracker.h>
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
@@ -19,6 +20,7 @@
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
 #include "XtcReaderActivity.h"
+#include "bookorbit/BookOrbitAgent.h"
 #include "util/PluginEvents.h"
 
 ReaderActivity::ReaderActivity(const char* name, GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -77,7 +79,15 @@ void ReaderActivity::onEnter() {
   sdFontSystem.ensureLoaded(renderer);
   applyInitialOrientation();
 
-  if (!loadBook()) {
+  // Drain any sync that captured the previous open-book state before mapping
+  // incoming annotations or reading progress from this book's sidecar files.
+  const bool syncWasPaused = BOOKORBIT_AGENT.paused();
+  BOOKORBIT_AGENT.pause();
+  BOOKORBIT_AGENT.noteReaderBook(bookPath);
+  const bool loaded = loadBook();
+  if (!loaded) BOOKORBIT_AGENT.noteReaderBook("");
+  if (!syncWasPaused) BOOKORBIT_AGENT.resume();
+  if (!loaded) {
     if (!handleLoadFailure()) finish();
     return;
   }
@@ -97,7 +107,9 @@ void ReaderActivity::rememberBookOnceRendered() {
 }
 
 void ReaderActivity::onExit() {
+  BOOKORBIT_READING.pause();
   Activity::onExit();
+  BOOKORBIT_AGENT.noteReaderBook("");
 
   // Keep rebuildable font buffers from pinning the heap between reading sessions.
   if (auto* fontCache = renderer.getFontCacheManager()) {

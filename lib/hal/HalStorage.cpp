@@ -193,6 +193,16 @@ bool HalStorage::mkdir(const char* path, const bool pFlag) { HAL_STORAGE_WRAPPED
 
 bool HalStorage::exists(const char* path) { HAL_STORAGE_WRAPPED_CALL(exists, path); }
 
+uint64_t HalStorage::totalBytes() {
+  StorageLock lock;
+  return SDCard.sdTotalBytes();
+}
+
+uint64_t HalStorage::usedBytes() {
+  StorageLock lock;
+  return SDCard.sdUsedBytes();
+}
+
 bool HalStorage::remove(const char* path) { HAL_STORAGE_WRAPPED_CALL(remove, path); }
 bool HalStorage::rename(const char* oldPath, const char* newPath) {
   HAL_STORAGE_WRAPPED_CALL(rename, oldPath, newPath);

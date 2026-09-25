@@ -53,6 +53,9 @@ class HalStorage {
   bool writeFile(const char* path, const String& content);
   // Ensure a directory exists, creating it if necessary. Returns true on success.
   bool ensureDirectoryExists(const char* path);
+  // Card capacity and used bytes (used is cached by the SDK with a 20 s TTL).
+  uint64_t totalBytes();
+  uint64_t usedBytes();
 
   HalFile open(const char* path, const oflag_t oflag = O_RDONLY);
   bool mkdir(const char* path, const bool pFlag = true);

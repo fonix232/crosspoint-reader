@@ -1,0 +1,6 @@
+__pycache__/
+library/
+library-dock/
+library.json
+seed-manifest.json
+results/

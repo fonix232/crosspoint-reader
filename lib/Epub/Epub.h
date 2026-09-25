@@ -63,6 +63,8 @@ class Epub {
   bool load(bool buildIfMissing = true, bool skipLoadingCss = false);
   bool loadMetadata(std::string& title, std::string& author);
   bool loadSyncMetadata(SyncMetadata& metadata);
+  // Series name and position as well; both empty when the book publishes none.
+  bool loadMetadata(std::string& title, std::string& author, std::string& series, std::string& seriesIndex);
   bool clearCache() const;
   void setupCacheDir() const;
   const std::string& getCachePath() const;
@@ -72,6 +74,8 @@ class Epub {
   const std::string& getTitle() const;
   const std::string& getAuthor() const;
   const std::string& getLanguage() const;
+  const std::string& getSeries() const;
+  const std::string& getSeriesIndex() const;
   std::string getCoverBmpPath(bool cropped = false, bool originalThresholds = false) const;
   bool generateCoverBmp(bool cropped = false, bool originalThresholds = false) const;
   std::string getThumbBmpPath() const;

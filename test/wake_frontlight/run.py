@@ -10,6 +10,7 @@ start = source.index('  SETTINGS.loadFromFile();', source.index('void setup('))
 end = source.index('  HalDoubleTap::begin(', start)
 gate = source[start:end]
 assert end < source.index('  Frontlight.begin(', start)
+assert end < source.index('  BOOKORBIT_AGENT.begin(', start)
 fixture = r'''
 #include <cassert>
 #include <initializer_list>

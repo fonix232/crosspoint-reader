@@ -17,6 +17,8 @@ class BookMetadataCache {
     std::string language;
     std::string coverItemHref;
     std::string textReferenceHref;
+    std::string series;       // series/collection name, empty when none
+    std::string seriesIndex;  // position text as published ("3", "1.5")
   };
 
   struct SpineEntry {

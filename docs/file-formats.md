@@ -6,7 +6,7 @@ All POD fields are written in the ESP32 little-endian representation used by
 
 ## `book.bin`
 
-### Version 10
+### Version 11
 
 `book.bin` stores EPUB metadata plus lookup tables for spine and TOC entries.
 The current firmware writes this version from `BookMetadataCache`.
@@ -18,7 +18,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 10
+#define EXPECTED_VERSION 11
 #define MAX_STRING_LENGTH 65535
 
 struct String {
@@ -39,6 +39,8 @@ struct Metadata {
     String language [[comment("Book language code")]];
     String coverItemHref [[comment("Path to cover image")]];
     String textReferenceHref [[comment("Path to guided first text reference")]];
+    String series [[comment("Series/collection name (v11+, may be empty)")]];
+    String seriesIndex [[comment("Series position text, e.g. \"3\" (v11+)")]];
 };
 
 struct SpineEntry {
@@ -704,6 +706,28 @@ make a real book disappear.
 
 `selfSize` is the expected file size. Comparing it against the real one is a free
 truncation guard: a build cut short by a power failure cannot pass.
+
+### BookOrbit annotation and event storage
+
+`/.crosspoint/bookorbit/<account>/annotations/<path-fnv64>-{bookmarks,highlights}/`
+contains a fixed 32-byte-key index and schema-1 JSON records. Records preserve
+local identity, server id/version, content locators, mapped offsets, dirty state
+and pending acknowledgements. Deleted entries remain as tombstones. `history`
+marks a known inventory; the sibling `.guard` prevents an absent inventory from
+becoming authoritative again after state loss. Replacement writes use `.tmp`
+and `.bak`, recovering a backup when the live file is absent.
+
+`/.crosspoint/reading-events/<path-fnv64>.bin` stores little-endian 24-byte events:
+boot id, uptime milliseconds, UTC start time, duration seconds, normalized page,
+and total pages (six uint32 fields). Up to 8192 records are retained. Prefix
+acknowledgements preserve events appended during the HTTP request. Boot anchors
+`clock-<boot>.bin` contain uptime milliseconds and UTC seconds (two uint32 fields).
+Undatable old-boot records are retained separately in `.bin.undated`.
+
+The existing 128-byte managed-file record uses flag bit 4 for sideloads. Their
+original paths live in `sideload-<bookId>.json` in the account directory; managed
+downloads continue deriving their path from book/file ids. Bookmark JSON adds
+an optional `syncDatetime` field and uses recoverable `.tmp`/`.bak` replacement.
 
 ## Clipping store (`/.crosspoint/clippings/epub_<path-hash>.bin`)
 

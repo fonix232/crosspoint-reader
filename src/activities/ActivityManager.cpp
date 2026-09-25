@@ -2,6 +2,7 @@
 
 #include <BlePageTurner.h>
 #include <BoardConfig.h>
+#include <BookOrbitReadingTracker.h>
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <HalDisplay.h>
@@ -16,6 +17,8 @@
 #include "CrossPointSettings.h"
 #include "HapticFeedback.h"
 #include "OpdsServerStore.h"
+#include "bookorbit/BookOrbitInsightsActivity.h"
+#include "bookorbit/BookOrbitSettingsActivity.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
@@ -159,6 +162,9 @@ void ActivityManager::loop() {
         !bleturner::beforeScreenChange(0, pendingActivity && pendingActivity->isReaderActivity())) {
       return;
     }
+    // All navigation paths (including global panels) suspend the page timer.
+    // Do this before taking the render lock or running another activity.
+    BOOKORBIT_READING.pause();
     if (pendingAction == PendingAction::Pop) {
       RenderLock lock;
 
@@ -303,6 +309,27 @@ void ActivityManager::goToSettings(const SettingsSection openSection) {
   replaceActivity(std::make_unique<SettingsListActivity>(renderer, mappedInput, openSection));
 }
 
+void ActivityManager::goToBookOrbitSettings() {
+  goToSettings(SettingsSection::Network);
+  if (!currentActivity) return;  // deferred replace: only reachable from boot, where it is immediate
+  auto sub = makeUniqueNoThrow<BookOrbitSettingsActivity>(renderer, mappedInput);
+  if (!sub) {
+    LOG_ERR("ACT", "OOM: BookOrbit settings activity");
+    return;
+  }
+  // Stacked like Settings does it, so Back pops to the Settings list.
+  currentActivity->startActivityForResult(std::move(sub), [](const ActivityResult&) {});
+}
+
+void ActivityManager::goToBookOrbitInsights() {
+  auto activity = makeUniqueNoThrow<BookOrbitInsightsActivity>(renderer, mappedInput);
+  if (!activity) {
+    LOG_ERR("ACT", "OOM: insights activity");
+    return;
+  }
+  replaceActivity(std::move(activity));
+}
+
 void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
 }
@@ -377,6 +404,8 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
       initialMenuItem = HomeMenuItem::FILE_TRANSFER;
     } else if (activityName == "Settings" || activityName == "SettingsList") {
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
+    } else if (activityName == "BookOrbitInsights") {
+      initialMenuItem = HomeMenuItem::INSIGHTS;
     }
   }
   replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, cleanInitialRefresh));
@@ -384,6 +413,7 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
 
 void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {
+  BOOKORBIT_READING.pause();
   mappedInput.resetHomeButtonInput();
   if (pendingActivity) {
     // Should never happen in practice

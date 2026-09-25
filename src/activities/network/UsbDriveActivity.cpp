@@ -6,6 +6,7 @@
 
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
+#include "bookorbit/BookOrbitAgent.h"
 #include "components/UITheme.h"
 
 namespace fui = freeink::ui;
@@ -17,6 +18,9 @@ void UsbDriveActivity::onEnter() {
 
   // Show the safety instructions before giving the raw SD card to the USB host.
   requestUpdateAndWait();
+  // The USB host owns raw sectors until reboot; drain background filesystem I/O
+  // before the HAL hands off the card and keep the worker paused throughout.
+  BOOKORBIT_AGENT.pause();
   if (!Storage.beginUsbDrive()) {
     LOG_ERR("USB", "Unable to start USB Drive");
     preparing = false;

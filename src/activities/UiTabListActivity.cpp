@@ -107,9 +107,10 @@ void UiTabListActivity::buildTabBar(UiScreen& screen) {
   fui::TabItem tabs[MAX_TABS];
   for (int i = 0; i < count; i++) {
     tabs[i].label = tabLabel(i);
+    tabs[i].icon = tabIcon(i);
     tabs[i].value = static_cast<int16_t>(i);
     tabs[i].selected = activeTab() == i;
-    tabs[i].indicator = tabIndicator(i);
+    tabs[i].indicator = tabs[i].icon ? fui::TabIndicator::None : tabIndicator(i);
   }
   fui::TabBarProps tabProps;
   tabProps.tabs = tabs;
@@ -139,7 +140,8 @@ void UiTabListActivity::buildTabBar(UiScreen& screen) {
   const int16_t tabLineHeight = screen.target().lineHeight(tabProps.text.font);
   const int16_t preferredTabHeight =
       mappedInput.hasTouch() ? TOUCH_TAB_BAR_HEIGHT : static_cast<int16_t>(metrics.tabBarHeight);
-  const int16_t tabBand = preferredTabHeight > tabLineHeight + 10 ? preferredTabHeight : tabLineHeight + 10;
+  const int16_t contentHeight = count > 0 && tabs[0].icon ? tabs[0].icon.height : tabLineHeight;
+  const int16_t tabBand = std::max<int16_t>(preferredTabHeight, contentHeight + 10);
 
   if (tabPillMaxPad > 0) {
     // Cap each pill at its label plus this padding: the equal-width slots (and
@@ -200,6 +202,22 @@ void UiTabListActivity::buildTabBar(UiScreen& screen) {
                             static_cast<int16_t>(tabRect.height - divider)};
   tabProps.divider = false;
   fui::tabBar(screen.frame(), slotsRect, tabProps);
+  // Icon tabs keep the direction arrow beside the icon inside the padded pill.
+  // The SDK's built-in indicator belongs to a text row underneath the icon.
+  if (count > 0) {
+    const int16_t slotWidth = (slotsRect.width - tabProps.gap * (count - 1)) / count;
+    for (int i = 0; i < count; ++i) {
+      const auto direction = tabIndicator(i);
+      if (!tabs[i].icon || direction == fui::TabIndicator::None) continue;
+      const int16_t x = slotsRect.x + i * (slotWidth + tabProps.gap) + slotWidth / 2 + tabs[i].icon.width / 2 + 4;
+      const int16_t y = slotsRect.y + (slotsRect.height + tabProps.tabInset.top - tabProps.tabInset.bottom) / 2;
+      const int16_t tip = direction == fui::TabIndicator::Up ? -3 : 3;
+      const auto paint = tabs[i].selected ? tabStyles.selected.foreground : tabStyles.normal.foreground;
+      screen.target().triangle(fui::Point{x, static_cast<int16_t>(y + tip)},
+                               fui::Point{static_cast<int16_t>(x - 3), static_cast<int16_t>(y - tip)},
+                               fui::Point{static_cast<int16_t>(x + 3), static_cast<int16_t>(y - tip)}, paint);
+    }
+  }
   screen.target().fill(fui::Rect{tabRect.x, static_cast<int16_t>(tabRect.bottom() - divider), tabRect.width, divider},
                        fui::Paint::solid(fui::Color::Black));
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));

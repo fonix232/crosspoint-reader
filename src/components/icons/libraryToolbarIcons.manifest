@@ -1,0 +1,10 @@
+# Regenerate from the repository root with:
+#   python3 freeink-sdk/libs/assets/Icons/tools/gen_icons.py \
+#     --manifest src/components/icons/libraryToolbarIcons.manifest \
+#     --svgdir freeink-sdk/libs/assets/Icons/lucide/icons \
+#     --sizes 24 --out src/components/icons/libraryToolbarIcons.h
+library-recent = eye
+library-title = type
+library-author = user-round
+library-series = library-big
+library-device = smartphone

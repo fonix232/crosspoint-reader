@@ -1,5 +1,7 @@
 #pragma once
 
+#include <EpdFontFamily.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -147,7 +149,8 @@ enum UIIcon {
   Hotspot,
   Bookmark,
   Usb,
-  Blocks
+  Blocks,
+  Chart
 };
 
 // Default theme implementation (Classic Theme)
@@ -280,9 +283,13 @@ class BaseTheme {
   static int headerStatusInset();
   virtual void drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label,
                              const char* rightLabel = nullptr) const;
+  static int readingDetailsHeight(const GfxRenderer& renderer);
+  static void drawReadingDetails(GfxRenderer& renderer, Rect rect, const RecentBook& book);
   virtual void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                    const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
                                    bool& bufferRestored, std::function<bool()> storeCoverBuffer) const;
+  static void drawMenuLabel(GfxRenderer& renderer, Rect rect, const std::string& label, int fontId, bool centered,
+                            bool black, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
   virtual void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                               const std::function<std::string(int index)>& buttonLabel,
                               const std::function<UIIcon(int index)>& rowIcon) const;

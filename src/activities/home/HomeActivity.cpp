@@ -1,6 +1,13 @@
 #include "HomeActivity.h"
 
 #include <Bitmap.h>
+#include <BookOrbitCatalogFormat.h>
+#include <BookOrbitCredentialStore.h>
+#include <BookOrbitFileStore.h>
+#include <BookOrbitInsights.h>
+#include <BookOrbitInsightsCache.h>
+#include <BookOrbitProgressSync.h>
+#include <BookOrbitSyncState.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -10,6 +17,7 @@
 #include <LibraryBuilder.h>
 #include <LibraryIndexFile.h>
 #include <Memory.h>
+#include <Txt.h>
 #include <Utf8.h>
 #include <Xtc.h>
 
@@ -23,6 +31,8 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "activities/bookorbit/BookOrbitConflictActivity.h"
+#include "bookorbit/BookOrbitAgent.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -32,6 +42,9 @@ int HomeActivity::getMenuItemCount() const {
     count += recentBooks.size();
   }
   if (hasLibrarySlot()) {
+    count++;
+  }
+  if (hasInsights) {
     count++;
   }
   return count;
@@ -234,6 +247,8 @@ void HomeActivity::onEnter() {
   // even when no SD plugins are installed yet so Plugin Hub can be installed
   // from inside the Plugins screen (or users can sideload plugins manually).
   hasPlugins = SETTINGS.pluginsEnabled != 0;
+  hasInsights = BOOKORBIT_STORE.isConfigured();
+  if (hasInsights) loadInsightsLabel();
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   if (UITheme::getInstance().hasCoverGridHome()) {
@@ -246,11 +261,17 @@ void HomeActivity::onEnter() {
   if (coverGridUi) {
     fillCoverGridFromLibrary();
     resolveGridCoverPaths();
-    coverGridUi->begin(recentBooks, hasLibrarySlot(), hasContinueReading);
+    coverGridUi->begin(recentBooks, hasLibrarySlot(), hasContinueReading, hasInsights);
   }
+  loadReadingDetails();
+  seenSyncGeneration = BOOKORBIT_AGENT.generation();
+  syncWasBusy = BOOKORBIT_AGENT.busy();
+  syncWasFailed = BOOKORBIT_AGENT.lastJobFailed();
 
   const auto base = static_cast<int>(recentBooks.size());
-  selectorIndex = initialMenuItem == HomeMenuItem::NONE ? 0 : base + menuItemToIndex(initialMenuItem, hasLibrarySlot());
+  selectorIndex = initialMenuItem == HomeMenuItem::NONE
+                      ? 0
+                      : base + menuItemToIndex(initialMenuItem, hasLibrarySlot(), hasInsights);
 
   // Trigger first update
   requestUpdate();
@@ -302,6 +323,19 @@ void HomeActivity::freeCoverBuffer() {
 }
 
 void HomeActivity::loop() {
+  auto& agent = BOOKORBIT_AGENT;
+  if (syncWasBusy != agent.busy() || syncWasFailed != agent.lastJobFailed() ||
+      (!agent.busy() && seenSyncGeneration != agent.generation())) {
+    RenderLock lock(*this);
+    syncWasBusy = agent.busy();
+    syncWasFailed = agent.lastJobFailed();
+    if (!syncWasBusy) {
+      loadReadingDetails();
+      seenSyncGeneration = agent.generation();
+      if (hasInsights) loadInsightsLabel();
+    }
+    requestUpdate();
+  }
   const int menuCount = getMenuItemCount();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
@@ -311,7 +345,7 @@ void HomeActivity::loop() {
       return;
     }
     const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
-    switch (indexToMenuItem(menuIndex, hasLibrarySlot())) {
+    switch (indexToMenuItem(menuIndex, hasLibrarySlot(), hasInsights)) {
       case HomeMenuItem::FILE_BROWSER:
         onFileBrowserOpen();
         break;
@@ -326,6 +360,9 @@ void HomeActivity::loop() {
         break;
       case HomeMenuItem::SETTINGS_MENU:
         onSettingsOpen();
+        break;
+      case HomeMenuItem::INSIGHTS:
+        onInsightsOpen();
         break;
       default:
         break;
@@ -416,9 +453,24 @@ void HomeActivity::loop() {
   const int recentCount = std::min(static_cast<int>(recentBooks.size()), coverColumnCount);
   const int coverColumnWidth = (content.width - 2 * metrics.contentSidePadding) / coverColumnCount;
   int touchedBook = -1;
-  const auto coverTouch = mappedInput.colTouch(touchedBook, content.x + metrics.contentSidePadding, coverColumnWidth,
-                                               recentCount, metrics.homeTopPadding,
-                                               metrics.homeTopPadding + metrics.homeCoverTileHeight, coverColumnWidth);
+  const int coverLeft = content.x + metrics.contentSidePadding;
+  int holdX = 0, holdY = 0;
+  if (mappedInput.wasScreenLongPress(holdX, holdY)) {
+    if (holdX >= coverLeft && holdX < coverLeft + coverColumnWidth * recentCount && holdY >= metrics.homeTopPadding &&
+        holdY < metrics.homeTopPadding + metrics.homeCoverTileHeight) {
+      selectorIndex = (holdX - coverLeft) / coverColumnWidth;
+      openReadingSync();
+    }
+    return;
+  }
+  if (selectorIndex < static_cast<int>(recentBooks.size()) && recentBooks[selectorIndex].reading.canSync &&
+      mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, 600)) {
+    openReadingSync();
+    return;
+  }
+  const auto coverTouch =
+      mappedInput.colTouch(touchedBook, coverLeft, coverColumnWidth, recentCount, metrics.homeTopPadding,
+                           metrics.homeTopPadding + metrics.homeCoverTileHeight, coverColumnWidth);
   if (coverTouch != MappedInputManager::RowTouch::None) {
     if (coverTouch == MappedInputManager::RowTouch::Down) {
       if (selectorIndex != touchedBook) {
@@ -502,6 +554,7 @@ void HomeActivity::render(RenderLock&&) {
     return;
   }
   bool bufferRestored = coverRendered && coverBufferStored && restoreCoverBuffer();
+  if (!bufferRestored) coverRendered = false;
 
   // Band spans topPadding..homeTopPadding: the cover tile starts at the fixed
   // homeTopPadding, so the height must shrink by topPadding or the band (and a
@@ -519,6 +572,10 @@ void HomeActivity::render(RenderLock&&) {
   coverRectW = content.width;
   coverRectH = metrics.homeCoverTileHeight;
 
+  for (auto& book : recentBooks) {
+    if (syncWasBusy && book.reading.canSync && book.reading.sync != ReadingCardSync::Conflict)
+      book.reading.sync = ReadingCardSync::Syncing;
+  }
   GUI.drawRecentBookCover(renderer, Rect{content.x, metrics.homeTopPadding, content.width, metrics.homeCoverTileHeight},
                           recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
                           std::bind(&HomeActivity::storeCoverBuffer, this));
@@ -531,6 +588,10 @@ void HomeActivity::render(RenderLock&&) {
   if (hasLibrarySlot()) {
     menuItems.insert(menuItems.begin() + 2, hasPlugins ? tr(STR_PLUGINS) : tr(STR_OPDS_BROWSER));
     menuIcons.insert(menuIcons.begin() + 2, Plugins);
+  }
+  if (hasInsights) {
+    menuItems.push_back(insightsLabel.c_str());
+    menuIcons.push_back(Chart);
   }
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
@@ -549,8 +610,11 @@ void HomeActivity::render(RenderLock&&) {
       [&menuItems](int index) { return std::string(menuItems[index]); },
       [&menuIcons](int index) { return menuIcons[index]; });
 
-  const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
-                                            tr(STR_DIR_DOWN));
+  const bool syncAction =
+      selectorIndex < static_cast<int>(recentBooks.size()) && recentBooks[selectorIndex].reading.canSync;
+  const auto labels =
+      mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME),
+                            syncAction ? tr(STR_HOME_OPEN_SYNC) : tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer(cleanInitialRefresh && !firstRenderDone ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH);
@@ -578,3 +642,114 @@ void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
 
 void HomeActivity::onPluginsOpen() { activityManager.goToPlugins(hasOpdsServers); }
+
+void HomeActivity::onInsightsOpen() { activityManager.goToBookOrbitInsights(); }
+
+// A second line from the cached insights snapshot: the streak and this week's
+// reading time, or the plain entry name before the first sync.
+void HomeActivity::loadInsightsLabel() {
+  insightsLabel = tr(STR_BOOKORBIT_INSIGHTS);
+  auto summary = makeUniqueNoThrow<bookorbit::InsightsSummary>();
+  if (!summary || !bookorbit::loadInsightsSummary(BOOKORBIT_STORE.getAccountKey(), *summary)) return;
+  char week[16];
+  bookorbit::formatDurationShort(summary->last7DaysSeconds, week, sizeof(week));
+  char buf[96];
+  snprintf(buf, sizeof(buf), tr(STR_BOOKORBIT_INSIGHTS_EXCERPT), static_cast<unsigned>(summary->currentStreak), week);
+  insightsLabel += "\n";
+  insightsLabel += buf;
+}
+
+namespace {
+uint32_t readCardU32(const uint8_t* bytes) {
+  return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
+         (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
+}
+void loadPagedReadingDetails(RecentBook& book) {
+  if (FsHelpers::hasXtcExtension(book.path)) {
+    Xtc xtc(book.path, "/.crosspoint");
+    HalFile file;
+    uint8_t page[4];
+    if (xtc.load() && xtc.getPageCount() &&
+        Storage.openFileForRead("HOME", xtc.getCachePath() + "/progress.bin", file) && file.read(page, 4) == 4)
+      book.reading.percent = xtc.calculateProgress(std::min(readCardU32(page), xtc.getPageCount() - 1));
+  }
+}
+void loadReadingBook(RecentBook& book, bookorbit::FileStore& files, bool indexed, bool configured, bool enabled,
+                     bool failed) {
+  book.reading = ReadingCardDetails{};
+  book.reading.canSync = false;
+  if (!FsHelpers::hasReflowableBookExtension(book.path)) {
+    loadPagedReadingDetails(book);
+    return;
+  }
+  bookorbit::LocalProgressFile local;
+  const bool readable = bookorbit::readLocalProgress(book.path, local);
+  // Metadata-only cache loading avoids parsing an EPUB or laying out pages
+  // just to show Home. The object exceeds the small task-stack budget.
+  auto epub = makeUniqueNoThrow<Epub>(book.path, "/.crosspoint");
+  if (epub && readable && local.valid && epub->load(false, true)) {
+    if (local.spine < epub->getSpineItemsCount()) {
+      const float fraction = local.pageCount ? std::min(1.0f, static_cast<float>(local.page) / local.pageCount) : 0;
+      book.reading.percent =
+          static_cast<int8_t>(std::max(0.0f, std::min(100.0f, epub->calculateProgress(local.spine, fraction) * 100)));
+      const int toc = epub->getTocIndexForSpineIndex(local.spine);
+      if (toc >= 0)
+        bookorbit::copyUtf8Bounded(epub->getTocItem(toc).title, book.reading.chapter, sizeof(book.reading.chapter) - 1);
+    } else if (local.spine == epub->getSpineItemsCount()) {
+      book.reading.percent = 100;
+    }
+  }
+  epub.reset();
+  // TXT/Markdown now share EPUB progress, but BookOrbit sync remains EPUB-only.
+  if (!FsHelpers::hasEpubExtension(book.path)) return;
+  bool managed = false, conflict = false;
+  bool indexReadable = indexed;
+  bookorbit::AckState ack;
+  if (indexed) {
+    bookorbit::ManagedFile record;
+    for (uint16_t i = 0; i < files.count(); ++i) {
+      if (!files.read(i, record)) {
+        indexReadable = false;
+        break;
+      }
+      if (!record.complete() || files.pathFor(record) != book.path) continue;
+      managed = true;
+      book.reading.bookId = record.bookId;
+      book.reading.canSync = configured && enabled;
+      conflict = record.hasConflict();
+      ack.hasLocalAck = record.hasLocalAck();
+      ack.ackSpine = record.ackLocalSpine;
+      ack.ackKey = record.ackLocalKey;
+      break;
+    }
+  }
+  book.reading.sync = readingCardSync(configured, enabled, managed, conflict, BOOKORBIT_AGENT.busy(), failed,
+                                      readable && (!configured || indexReadable), local.toState(), ack);
+}
+}  // namespace
+
+void HomeActivity::loadReadingDetails() {
+  // At most three cards. The file index is bounded (512 records) and is only
+  // opened on entry or after a worker generation change, never per frame.
+  bookorbit::FileStore files;
+  const bool configured = BOOKORBIT_STORE.isConfigured();
+  const bool enabled = BOOKORBIT_STORE.getSyncProgress();
+  const std::string account = configured ? BOOKORBIT_STORE.getAccountKey() : "";
+  const bool indexed = configured && files.open(account);
+  bookorbit::SyncState state;
+  if (configured) bookorbit::loadSyncState(account, state);
+  const bool failed = BOOKORBIT_AGENT.lastJobFailed() || (state.progressAttemptAt && !state.progressAttemptOk);
+  for (auto& book : recentBooks) loadReadingBook(book, files, indexed, configured, enabled, failed);
+}
+
+void HomeActivity::openReadingSync() {
+  if (selectorIndex >= static_cast<int>(recentBooks.size()) || !recentBooks[selectorIndex].reading.canSync) return;
+  const auto& book = recentBooks[selectorIndex];
+  auto activity = makeUniqueNoThrow<BookOrbitConflictActivity>(renderer, mappedInput, book.reading.bookId, book.title,
+                                                               BookOrbitConflictActivity::ReturnTo::Home);
+  if (!activity) {
+    LOG_ERR("HOME", "OOM: sync activity");
+    return;
+  }
+  activityManager.replaceActivity(std::move(activity));
+}

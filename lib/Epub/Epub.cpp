@@ -15,6 +15,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string_view>
@@ -28,6 +29,16 @@
 Epub::Epub(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
   cachePath = cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(this->filepath));
 }
+
+namespace {
+// Series position as published: "3", "1.5"; empty when the book has none.
+std::string formatSeriesIndex(const std::optional<float>& index) {
+  if (!index) return {};
+  char text[16];
+  snprintf(text, sizeof(text), "%g", static_cast<double>(*index));
+  return text;
+}
+}  // namespace
 
 bool Epub::findContentOpfFile(std::string* contentOpfFile, ZipFile* sharedZip) const {
   const auto containerPath = "META-INF/container.xml";
@@ -104,6 +115,8 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   bookMetadata.title = utf8ComposeNfc(opfParser.title);
   bookMetadata.author = utf8ComposeNfc(opfParser.author);
   bookMetadata.language = opfParser.language;
+  bookMetadata.series = utf8ComposeNfc(opfParser.series);
+  bookMetadata.seriesIndex = formatSeriesIndex(opfParser.seriesIndex);
 
   if (metadataOnly) {
     LOG_DBG("EBP", "Successfully parsed package metadata");
@@ -652,8 +665,16 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
 }
 
 bool Epub::loadMetadata(std::string& title, std::string& author) {
+  std::string series;
+  std::string seriesIndex;
+  return loadMetadata(title, author, series, seriesIndex);
+}
+
+bool Epub::loadMetadata(std::string& title, std::string& author, std::string& series, std::string& seriesIndex) {
   title.clear();
   author.clear();
+  series.clear();
+  seriesIndex.clear();
 
   if (Txt::isTxtOrMd(filepath)) {
     title = utf8ComposeNfc(FsHelpers::getFileNameWithoutExtension(filepath));
@@ -664,6 +685,8 @@ bool Epub::loadMetadata(std::string& title, std::string& author) {
   if (metadataCache && metadataCache->load()) {
     title = metadataCache->coreMetadata.title;
     author = metadataCache->coreMetadata.author;
+    series = metadataCache->coreMetadata.series;
+    seriesIndex = metadataCache->coreMetadata.seriesIndex;
     return true;
   }
   if (!metadataCache) {
@@ -684,6 +707,8 @@ bool Epub::loadMetadata(std::string& title, std::string& author) {
 
   title = std::move(metadata.title);
   author = std::move(metadata.author);
+  series = std::move(metadata.series);
+  seriesIndex = std::move(metadata.seriesIndex);
   return true;
 }
 
@@ -769,6 +794,16 @@ const std::string& Epub::getLanguage() const {
   static std::string blank;
   if (!bookMetadataCache || !bookMetadataCache->isLoaded()) return blank;
   return bookMetadataCache->coreMetadata.language;
+}
+
+const std::string& Epub::getSeries() const {
+  static const std::string empty;
+  return bookMetadataCache ? bookMetadataCache->coreMetadata.series : empty;
+}
+
+const std::string& Epub::getSeriesIndex() const {
+  static const std::string empty;
+  return bookMetadataCache ? bookMetadataCache->coreMetadata.seriesIndex : empty;
 }
 
 std::string Epub::getCoverBmpPath(bool cropped, bool originalThresholds) const {

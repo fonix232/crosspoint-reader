@@ -8,6 +8,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 
@@ -171,6 +172,7 @@ constexpr uint32_t FP_ONE = 1UL << 16;
 // Static file pointer for JPEGDEC open callback.
 // Safe in single-threaded embedded context; never accessed concurrently.
 static HalFile* s_jpegFile = nullptr;
+static std::atomic_flag s_decoderBusy = ATOMIC_FLAG_INIT;
 static uint8_t s_jpegIoSinceYield = 0;
 
 static void yieldToIdle() { vTaskDelay(1); }
@@ -521,6 +523,13 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
     return false;
   }
 
+  // The JPEG library's open callback has no user context. Reject overlapping
+  // conversions rather than allowing another task to replace its file pointer.
+  if (s_decoderBusy.test_and_set(std::memory_order_acquire)) return false;
+  const ScopedCleanup decoderLease{[]() {
+    s_jpegFile = nullptr;
+    s_decoderBusy.clear(std::memory_order_release);
+  }};
   s_jpegFile = &jpegFile;
 
   const auto jpeg = makeUniqueNoThrow<JPEGDEC>();

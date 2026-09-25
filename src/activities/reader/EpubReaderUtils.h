@@ -3,11 +3,10 @@
 #include <Epub.h>
 #include <Epub/PageLink.h>
 #include <Logging.h>
+#include <ProgressFile.h>
 
 #include <optional>
 #include <vector>
-
-#include "ProgressFile.h"
 
 namespace EpubReaderUtils {
 

@@ -1,6 +1,13 @@
 #include "EpubReaderActivity.h"
 
 #include <BlePageTurner.h>
+#include <BookOrbitAnnotationSync.h>
+#include <BookOrbitCredentialStore.h>
+#include <BookOrbitDataStore.h>
+#include <BookOrbitPaths.h>
+#include <BookOrbitReadingTracker.h>
+#include <BookOrbitSyncState.h>
+#include <ChapterXPathResolver.h>
 #include <Epub/Page.h>
 #include <Epub/blocks/TextBlock.h>
 #include <FontCacheManager.h>
@@ -10,6 +17,7 @@
 #include <HalFrontlight.h>
 #include <HalGPIO.h>
 #include <HalStorage.h>
+#include <HighlightTextResolver.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
@@ -35,6 +43,7 @@
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderClippingListActivity.h"
 #include "EpubReaderFootnoteSelectActivity.h"
+#include "EpubReaderHighlightsActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
@@ -52,6 +61,7 @@
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/settings/TextSettingsActivity.h"
+#include "bookorbit/BookOrbitAgent.h"
 #include "clippings/ClippingText.h"
 #include "clippings/ClippingsManager.h"
 #include "components/UITheme.h"
@@ -272,6 +282,11 @@ bool EpubReaderActivity::loadBook() {
 
   epub->setupCacheDir();
 
+  const auto account = BOOKORBIT_STORE.getAccountKey();
+  if (!account.empty() && !bookorbit::mapPendingAnnotations(account, epub, renderer)) {
+    LOG_ERR("ERS", "Some annotations remain unmapped; will retry on next open");
+  }
+
   HalFile f;
   if (Storage.openFileForRead("ERS", epub->getCachePath() + "/progress.bin", f)) {
     uint8_t data[10];
@@ -453,7 +468,7 @@ void EpubReaderActivity::openDictionaryWordSelect() {
 }
 
 void EpubReaderActivity::startClipSelection(const int initialX, const int initialY,
-                                            const ClipSelectionActivity::Mode mode) {
+                                            const ClipSelectionActivity::Mode mode, const bool bookOrbitHighlight) {
   if (!section || !epub || section->currentPage < 0 || section->currentPage >= section->pageCount) return;
 
   const int pageNumber = section->currentPage;
@@ -513,7 +528,8 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
     return;
   }
   startActivityForResult(std::move(activity), [this, spineIndex, pageNumber, pageCount, layoutSignature,
-                                               bookTitle = std::move(bookTitle), author = std::move(author),
+                                               bookOrbitHighlight, bookTitle = std::move(bookTitle),
+                                               author = std::move(author),
                                                chapterTitle = std::move(chapterTitle)](const ActivityResult& result) {
     if (result.isCancelled) {
       requestUpdate();
@@ -555,6 +571,11 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
       });
       return;
     }
+    if (bookOrbitHighlight) {
+      if (currentSpineIndex == spineIndex) saveBookOrbitHighlight(startPage, clipping.startWordIndex, clipping.text);
+      requestUpdate();
+      return;
+    }
     const uint16_t paragraphIndex =
         section ? section->getParagraphIndexForPage(startPage).value_or(UINT16_MAX) : UINT16_MAX;
     const auto addResult = CLIPPINGS.addClipping(
@@ -572,6 +593,57 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
     clippingMessageTime = millis();
     requestUpdate();
   });
+}
+
+// Prefix words disambiguate repeated text when resolving the selection to chapter offsets.
+void EpubReaderActivity::saveBookOrbitHighlight(const uint16_t startPage, const uint16_t startWordIndex,
+                                                const std::string& text) {
+  static constexpr uint16_t PREFIX_WORDS = 32;
+  auto page = section ? section->loadPage(startPage) : nullptr;
+  bool ok = page != nullptr;
+  bookorbit::Annotation entry;
+  if (ok) {
+    std::string prefix;
+    uint16_t wordIndex = 0;
+    const uint16_t prefixStart = startWordIndex > PREFIX_WORDS ? startWordIndex - PREFIX_WORDS : 0;
+    for (const auto& element : page->elements) {
+      if (element->getTag() != TAG_PageLine || wordIndex >= startWordIndex) continue;
+      const auto& block = static_cast<const PageLine&>(*element).getBlock();
+      if (!block || !block->valid()) continue;
+      for (uint16_t i = 0; i < block->wordCount() && wordIndex < startWordIndex; ++i) {
+        const char* word = block->wordText(i);
+        if (!clippingText::hasVisibleText(word)) continue;
+        if (wordIndex++ < prefixStart) continue;
+        if (!prefix.empty()) prefix += ' ';
+        prefix += word;
+      }
+    }
+    entry.text = text;
+    entry.spine = currentSpineIndex;
+    RenderLock lock;
+    GfxRenderer::FrameBufferLoan loan(renderer);
+    ok = resolveHighlightText(epub, currentSpineIndex, page->visibleTextOffset, prefix, text, entry.offset,
+                              entry.endOffset);
+    if (ok) {
+      entry.pos = ChapterXPathResolver::findXPathForVisibleTextOffset(epub, currentSpineIndex, entry.offset);
+      entry.end = ChapterXPathResolver::findXPathForVisibleTextOffset(epub, currentSpineIndex, entry.endOffset);
+      ok = !entry.pos.empty() && !entry.end.empty();
+    }
+  }
+  if (ok) {
+    entry.mapped = true;
+    entry.percentage = epub->calculateProgress(currentSpineIndex, 0);
+    const auto toc = epub->getTocIndexForSpineIndex(currentSpineIndex);
+    if (toc >= 0) entry.title = epub->getTocItem(toc).title.substr(0, 500);
+    bookorbit::AnnotationStore store(bookorbit::annotationDirectory(BOOKORBIT_STORE.getAccountKey(), epub->getPath(),
+                                                                    bookorbit::AnnotationKind::Highlight));
+    ok = bookorbit::annotationIdentity(entry, bookorbit::nowIfClockValid()) && store.open() && store.put(entry);
+  }
+  if (!ok) {
+    RenderLock lock;
+    GUI.drawPopup(renderer, tr(STR_HIGHLIGHT_FAILED));
+    delay(1000);
+  }
 }
 
 void EpubReaderActivity::openFootnoteSelect(const bool reopenMenuOnCancel) {
@@ -639,6 +711,19 @@ void EpubReaderActivity::loop() {
   if (!epub) {
     finish();
     return;
+  }
+  if (overlay == Overlay::None && section && lastRenderCompleteMs != 0 && !RenderLock::peek()) {
+    const auto position = getCurrentPosition();
+    const float fraction =
+        position.totalPages > 1 ? static_cast<float>(position.pageNumber) / (position.totalPages - 1) : 0;
+    BOOKORBIT_READING.observe(epub->getPath(), position.spineIndex, position.pageNumber,
+                              epub->calculateProgress(position.spineIndex, fraction));
+  } else {
+    BOOKORBIT_READING.pause();
+  }
+  if (BOOKORBIT_AGENT.wantsReaderLocator()) {
+    BOOKORBIT_READING.flush();
+    offerBookOrbitSnapshot();
   }
 
   rememberBookOnceRendered();
@@ -1219,6 +1304,15 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
               jumpToPercent(std::get<PercentResult>(result.data).percent);
             }
           });
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::HIGHLIGHT: {
+      startClipSelection(-1, -1, ClipSelectionActivity::Mode::Clip, true);
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::HIGHLIGHTS: {
+      auto highlights = makeUniqueNoThrow<EpubReaderHighlightsActivity>(renderer, mappedInput, epub->getPath());
+      if (highlights) startActivityForResult(std::move(highlights), progressChangeResultHandler);
       break;
     }
     case EpubReaderMenuActivity::MenuAction::DICTIONARY: {
@@ -2040,6 +2134,33 @@ bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageC
   return EpubReaderUtils::saveProgress(*epub, spineIndex, currentPage, pageCount, offset);
 }
 
+// The background agent asks for the open book's locator instead of touching
+// its caches from another task. Same mapping as a bookmark, on this task.
+void EpubReaderActivity::offerBookOrbitSnapshot() {
+  bookorbit::ReaderSnapshot snapshot;
+  if (epub && section && !section->isBuilding()) {
+    const CrossPointPosition pos = getCurrentPosition();
+    const SavedProgressPosition saved = ProgressMapper::toSavedProgress(epub, pos);
+    // Mapping can invalidate the metadata cache if the SD card disappears.
+    // Do not publish its synthetic fallback as a real reading position.
+    if (pos.spineIndex < 0 || pos.spineIndex >= epub->getSpineItemsCount() || saved.xpath.empty()) {
+      BOOKORBIT_AGENT.offerReaderSnapshot(snapshot);
+      return;
+    }
+    snapshot.valid = true;
+    snapshot.path = epub->getPath();
+    snapshot.local.valid = true;
+    snapshot.local.spine = static_cast<uint16_t>(pos.spineIndex);
+    snapshot.local.page = static_cast<uint16_t>(pos.pageNumber < 0 ? 0 : pos.pageNumber);
+    snapshot.local.pageCount = static_cast<uint16_t>(pos.totalPages < 0 ? 0 : pos.totalPages);
+    snapshot.local.hasOffset = pos.hasVisibleTextOffset;
+    snapshot.local.offset = pos.visibleTextOffset;
+    snapshot.locator = saved.xpath;
+    snapshot.percentage = saved.percentage;
+  }
+  BOOKORBIT_AGENT.offerReaderSnapshot(snapshot);
+}
+
 void EpubReaderActivity::rememberCurrentContentOffset() {
   cachedVisibleTextOffset.reset();
   if (section && section->currentPage >= 0 && section->currentPage < section->pageCount) {
@@ -2108,6 +2229,26 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
 
   drawClippingHighlights(*page, fontId, orientedMarginTop, orientedMarginLeft);
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+  // Mark pages containing a saved highlight without changing the text's
+  // layout or relying on font-dependent word offsets. The Highlights list
+  // opens the exact content anchor, including after re-pagination.
+  {
+    bookorbit::AnnotationStore highlights(bookorbit::annotationDirectory(
+        BOOKORBIT_STORE.getAccountKey(), epub->getPath(), bookorbit::AnnotationKind::Highlight));
+    if (highlights.open()) {
+      bookorbit::Annotation entry;
+      const auto next = section->getVisibleTextOffsetForPage(section->currentPage + 1);
+      for (unsigned i = 0; i < highlights.count(); ++i) {
+        if (!highlights.read(i, entry)) break;
+        if (!entry.deleted && entry.mapped && entry.spine == static_cast<uint32_t>(currentSpineIndex) &&
+            entry.endOffset >= page->visibleTextOffset && (!next || entry.offset < *next)) {
+          const int x = std::max(1, orientedMarginLeft - 4);
+          renderer.drawLine(x, orientedMarginTop + 4, x, orientedMarginTop + 24, 2, true);
+          break;
+        }
+      }
+    }
+  }
   renderStatusBar();
   const auto tBwRender = millis();
 

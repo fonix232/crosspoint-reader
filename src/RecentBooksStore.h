@@ -5,11 +5,14 @@
 #include <string>
 #include <vector>
 
+#include "util/ReadingCardState.h"
+
 struct RecentBook {
   std::string path;
   std::string title;
   std::string author;
   std::string coverBmpPath;
+  ReadingCardDetails reading;  // Home-only snapshot; not persisted in recent.json.
 
   bool operator==(const RecentBook& other) const { return path == other.path; }
 };

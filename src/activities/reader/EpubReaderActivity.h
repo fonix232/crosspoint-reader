@@ -164,6 +164,7 @@ class EpubReaderActivity final : public ReaderActivity {
   void clearDeferredReposition();
   void rememberCurrentContentOffset();
   bool saveProgress(int spineIndex, int currentPage, int pageCount);
+  void offerBookOrbitSnapshot();
   void jumpToPercent(int percent);
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
   int currentTocIndex() const;
@@ -198,7 +199,9 @@ class EpubReaderActivity final : public ReaderActivity {
   void openFootnoteSelect(bool reopenMenuOnCancel);
   void openDictionaryWordSelect();
   void startClipSelection(int initialX = -1, int initialY = -1,
-                          ClipSelectionActivity::Mode mode = ClipSelectionActivity::Mode::Clip);
+                          ClipSelectionActivity::Mode mode = ClipSelectionActivity::Mode::Clip,
+                          bool bookOrbitHighlight = false);
+  void saveBookOrbitHighlight(uint16_t startPage, uint16_t startWordIndex, const std::string& text);
   int clippingAtPoint(const Page& page, int x, int y) const;
   void openClippings();
   void applyProgressChange(const ProgressChangeResult& progress);

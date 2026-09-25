@@ -267,3 +267,18 @@ TEST(ContentOpfParserCover, ReadingParserStillOpensManifestCache) {
   EXPECT_EQ(Storage.writeOpens, 1);
   EXPECT_EQ(Storage.readOpens, 1);
 }
+
+TEST(ContentOpfParserMetadata, ReadsFractionalEpub3GroupPosition) {
+  const std::string xml = R"(<package xmlns:dc="urn:dc"><metadata>
+    <meta property="belongs-to-collection" id="c01">Discworld</meta>
+    <meta refines="#c01" property="collection-type">series</meta>
+    <meta refines="#c01" property="group-position">1.5</meta>
+  </metadata></package>)";
+  ContentOpfParser parser("", "", xml.size(), nullptr);
+
+  parse(parser, xml);
+
+  EXPECT_EQ(parser.series, "Discworld");
+  ASSERT_TRUE(parser.seriesIndex.has_value());
+  EXPECT_FLOAT_EQ(*parser.seriesIndex, 1.5f);
+}

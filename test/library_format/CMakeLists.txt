@@ -1,5 +1,6 @@
 add_executable(LibraryFormatTest
   LibraryFormatTest.cpp
+  LibraryRowOrderTest.cpp
   ${REPO_ROOT}/lib/LibraryIndex/LibraryFormat.cpp
 )
 

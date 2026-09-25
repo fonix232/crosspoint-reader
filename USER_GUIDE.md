@@ -111,6 +111,11 @@ Upon turning the device on for the first time, you will be placed on the **[Home
 
 The Home screen is the main entry point to the firmware. From here you can navigate to **[Reading Mode](#4-reading-mode)** with the most recently read book, **[Browse Files](#33-browse-files-screen)**, the **[Library](#34-library-screen)**, **[File Transfer](#35-file-transfer-screen)**, or **[Settings](#36-settings)**.
 
+The currently reading card shows a progress bar and percentage from the saved reading position, plus the EPUB chapter title when its metadata is cached. XTC and TXT use their saved page position and available page count. Missing progress is labelled unavailable. BookOrbit status distinguishes local-only books, disabled sync, pending or synced positions, conflicts, and failures; it updates when background sync finishes.
+
+With BookOrbit progress sync enabled, **hold a linked EPUB card** (or hold **Confirm** while it is selected) to compare and sync that book’s reading position. Choose **Keep device** or **Use server** if its positions conflict; cancelling preserves the unresolved conflict. This checks only the selected book and returns to Home afterward. It does not wait for other books, annotations, or reading statistics to sync. A short tap or Confirm still opens the book.
+
+
 ### 3.2 Reading Mode
 
 See [Reading Mode](#4-reading-mode) below for more information.
@@ -126,22 +131,19 @@ The Browse Files screen acts as a file and folder browser. The full path to the 
 
 ### 3.4 Library Screen
 
-The Library indexes up to 4,096 supported books on the SD card and shows their titles and authors without requiring you to remember their folders. Its four tabs provide different views. An arrow beside an indexed tab shows the sort direction:
+The Library indexes up to 4,096 supported books on the SD card. Its toolbar uses Lucide icons; the arrow beside the selected icon shows the sort direction:
 
-- **Recent** lists the ten books you opened most recently. Hold a book to remove it from this list.
-- **Added** keeps books in the order in which the Library first discovered them. Down shows newest additions first; up shows oldest first.
-- **Title** groups books by the first letter of the title. Up sorts A-Z and down sorts Z-A. Titles beginning with numbers or punctuation appear under `#`; letters from non-English scripts, including Hebrew, have their own groups.
-- **Author** groups books by author. Up sorts A-Z and down sorts Z-A.
+- **Eye — Recent**: recently opened books first, followed by the remaining books in recency order.
+- **T — Title**: books by title, A–Z or Z–A.
+- **Person — Author**: authors with book counts. Open an author to see their books; Back returns to the author list. Authors without metadata appear under **Unknown author**.
+- **Books — Series** (with BookOrbit): series with book counts. Open a series to see its books in numeric series order.
+- **Phone — On device** (with BookOrbit): downloaded and queued BookOrbit books plus sideloaded files.
 
-On a button-only device:
+Author groups retain separate **BookOrbit** and **Only on this device** sections. Opening a group shows only that section's books for the chosen author. Author and Series group lists remain lists even when cover-grid mode is selected; opening a group uses your chosen book view. Search returns matching books across both sections.
 
-- Use **Up/Down** or **Left/Right** to move one row at a time. Hold a direction to move a page at a time.
-- Press **Confirm** to open the selected book.
-- Press **Back** from the book list to focus the tabs. Use **Left/Right** to select another tab, press **Confirm** to reverse its sort direction, or press **Down** to return to the list.
-- While the tabs are focused, hold **Confirm** to open Search.
-- In the Title or Author views, hold **Confirm** on a book to collapse the list to its letter or author groups. The matching group remains selected. Press **Confirm** to enter a group, or **Back** to restore the exact book and position you came from.
+On a button-only device, move with the direction buttons and press **Confirm** to open a group or book. Back from an opened group returns to its group list. Back from an ordinary book list focuses the toolbar; Confirm on the toolbar advances to the next tab, while holding Confirm reverses the order. On the Title tab without BookOrbit, hold Confirm on a book to collapse to initial-letter groups.
 
-On a touch device, tap tabs, books, and the Search icon directly. Tap an active indexed tab again to reverse its sort direction. Swipe to scroll. Long-press a book in the Recent view to remove it from the list. Long-press a book in a Title or Author view to collapse to the group list, then tap a group to expand it. The **Added** view is not grouped; tapping or long-pressing a book opens it.
+On a touch device, tap a toolbar icon, group, or book; tap the active toolbar icon again to reverse its order. Swipe to scroll and use the Search icon to search. Hold a BookOrbit author or series group to confirm downloading its missing books.
 
 The index is created automatically the first time the Library is opened. To pick up later file changes or updated metadata, use **Settings → System → Rebuild library index**. The **Use book metadata** setting controls whether the index reads titles and authors stored inside books.
 
@@ -799,6 +801,7 @@ Press **Ctrl-C** or close the graph window to exit.
 If the device is stuck in a bootloop, press and release the Reset button. Then, press and hold on to the configured Back button and the Power Button to boot to the Home Screen.
 
 There can be issues with broken cache or config. In this case, delete the `.crosspoint` directory on your SD card (or consider deleting only `settings.json`, `state.json`, or `epub_*` cache directories in the `.crosspoint/` folder).
+
 ### Automatic sleep and PaperS3 power button
 
 Quick Resume on Timeout still overrides the selected Sleep Screen for inactivity sleep. Turn that option off if automatic sleep should use Cover. Choosing Quick Resume as the Sleep Screen no longer automatically changes the independent timeout option; both preferences remain explicit.
@@ -811,6 +814,20 @@ Hardware check: with Cover selected and Quick Resume on Timeout off, test inacti
 
 Hardware references: [M5Stack PaperS3 documentation](https://docs.m5stack.com/en/core/PaperS3) and [schematic](https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/517/sch_papers3_V1.0.pdf). The SDK's description of holding the button for power-off/reset is outdated; M5Stack documents double-click power-off and long-press download mode.
 
+
+### BookOrbit annotations and online browsing
+
+- In a book, use **Highlight text** to select a first and last word on the page.
+  **Highlights** opens saved quotes; hold a quote to delete it. A margin line
+  marks pages with highlights. Bookmarks and highlights exchange with BookOrbit
+  after the book is closed, during the regular or manual sync.
+- Reading time uploads with regular sync. Exact content matches allow sideloaded
+  EPUBs to sync too; the device checks part of the local library each session.
+- **Settings → BookOrbit → Browse BookOrbit online** provides server search,
+  **Recently read**, collections and paged access beyond the offline cache.
+  Recently read uses BookOrbit’s reading history across devices; select a book
+  to download it. It requires Wi-Fi. You can also hold the
+  Library refresh icon, or focus its tabs and hold Up on button devices.
 
 ### PaperS3 double-tap sleep and wake
 
@@ -838,3 +855,19 @@ physical-device validation; battery-life figures have not been measured.
 
 The PaperS3 file-transfer connection menu now includes **USB Drive**. Connect USB, select that mode, and wait for the SD card to appear on the computer. Background BookOrbit sync is paused before the filesystem is handed to the host. Eject the drive safely on the computer before disconnecting; the reader restarts to Home and restores its USB serial connection. This exposes the existing SPI SD card and does not require removing it. Normal builds use DIO flash with OPI PSRAM.
 
+### Choosing BookOrbit libraries
+
+Open **Settings → BookOrbit → Libraries** to fetch the libraries your account can access.
+The default is **All libraries**. Tap a library to select only that library, then toggle
+additional libraries individually (up to 32). **Apply and sync** saves the selection
+and requests a fresh catalogue. Back cancels unsaved changes. Turning All libraries
+off with no individual libraries selected disables book syncing.
+
+Catalogue requests, online book searches and recent-book browsing are restricted to
+the selected libraries. With multiple libraries, online pages visit libraries in ID
+order; the offline Library rebuilds its combined title, author, series and recent
+orders. Existing downloads stay on the SD card, but books from deselected libraries
+no longer exchange positions, annotations or reading events, and queued downloads
+from those libraries are blocked. Insights remain account-wide because the official
+statistics API has no library filter. Switching server or username resets the choice
+to All libraries.

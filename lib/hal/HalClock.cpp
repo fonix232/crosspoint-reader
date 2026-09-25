@@ -52,6 +52,13 @@ bool HalClock::localTime(struct tm& out) const {
   return true;
 }
 
+bool HalClock::utcNow(time_t& out) const {
+  struct tm local;
+  if (!localTime(local)) return false;  // refreshes _cachedUtc on the poll cadence
+  out = _cachedUtc;
+  return true;
+}
+
 bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
   struct tm local;
   if (!localTime(local)) return false;
