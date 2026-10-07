@@ -34,6 +34,10 @@ class HalPowerManager {
   static constexpr unsigned long BATTERY_POLL_MS = 1500;       // ms
 
   void begin();
+  bool idleNap();
+  bool batteryCritical();
+  uint64_t idleSleepUs = 0;
+  uint32_t idleSleepCount = 0;
 
   // Control CPU frequency for power saving
   void setPowerSaving(bool enabled);
@@ -55,6 +59,14 @@ class HalPowerManager {
 
   // Get battery percentage (range 0-100)
   uint16_t getBatteryPercentage() const;
+
+  struct Diagnostics {
+    int millivolts = -1, estimatedPercent = -1, displayedPercent = -1;
+    int cpuMhz = 0, wifiMode = 0, wifiConnected = 0, usbConnected = 0;
+    int charging = -1, epdPower = -1, epdOutputEnable = -1, usbMillivolts = -1;
+  };
+  // Does not update the UI battery smoothing or request a performance lock.
+  Diagnostics diagnostics() const;
 
   // RAII helper class to manage power saving locks
   // Usage: create an instance of Lock in a scope to disable power saving, for example when running a task that needs

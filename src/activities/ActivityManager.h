@@ -66,6 +66,8 @@ class ActivityManager {
   // Whether to trigger a render after the current loop()
   // This variable must only be set by the main loop, to avoid race conditions
   std::atomic<bool> requestedUpdate{false};
+  std::atomic<uint32_t> renderRequested{0}, renderCompleted{0};
+  void notifyRender();
 
   // Counts screen changes, so the Bluetooth page turner can tell one visit of a book from the next.
   // Written by the main loop under RenderLock; the render task captures it under that lock.
@@ -98,7 +100,7 @@ class ActivityManager {
   void goToBrowser();
   void goToPlugins(bool showOpds);
   void goToReader(std::string path, bool allowFastInitialRefresh = false);
-  void goToSleep(bool fromTimeout = false);
+  void goToSleep(bool fromTimeout = false, bool fromReset = false);
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
   void goToCrashReport();
@@ -138,6 +140,11 @@ class ActivityManager {
   // Trigger a render and block until it completes.
   // Must NOT be called from the render task or while holding a RenderLock.
   void requestUpdateAndWait();
+
+  // Main-task only, while holding RenderLock. Used by wired captures as a barrier.
+  bool debugRenderIdle() const {
+    return pendingAction == PendingAction::None && !requestedUpdate && renderRequested == renderCompleted;
+  }
 };
 
 extern ActivityManager activityManager;  // singleton, to be defined in main.cpp

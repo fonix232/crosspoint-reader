@@ -6,6 +6,9 @@
 #include <SPI.h>
 #include <XteinkDetect.h>
 #include <esp_sleep.h>
+#if FREEINK_DEVICE_PAPERS3
+#include <BoardPaperS3.h>
+#endif
 
 // Global HalGPIO instance
 HalGPIO gpio;
@@ -223,6 +226,11 @@ bool HalGPIO::verifyPowerButtonWakeup() {
 }
 
 bool HalGPIO::isUsbConnected() const {
+#if FREEINK_DEVICE_PAPERS3
+  // M5Stack specifies USB present above 0.2 V on USB_DET (GPIO5).
+  // The divider's connected voltage does not reach a digital HIGH.
+  return BoardPaperS3::usbMillivolts() > 200;
+#endif
   if (!deviceIsX3() && BoardConfig::ACTIVE.usbDetect >= 0) {
     return digitalRead(BoardConfig::ACTIVE.usbDetect) == HIGH;
   }

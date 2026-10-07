@@ -85,6 +85,7 @@ void ActivityManager::renderTaskLoop() {
     // Acquire the lock before reading currentActivity to avoid a TOCTOU race
     // where the main task deletes the activity between the null-check and render().
     RenderLock lock;
+    const uint32_t renderingGeneration = renderRequested.load();
     if (currentActivity) {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
       // Night mode is a global output polarity applied to every activity.
@@ -96,6 +97,7 @@ void ActivityManager::renderTaskLoop() {
       currentActivity->render(std::move(lock));
       paintedVisit.store(renderingVisit, std::memory_order_release);
     }
+    renderCompleted.store(renderingGeneration);
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
     TaskHandle_t waiter = nullptr;
     taskENTER_CRITICAL(&activityManagerSpinlock);
@@ -117,7 +119,7 @@ void ActivityManager::loop() {
     // processing a pending action here could re-enable filesystem users while
     // the USB host still owns the raw SD card.
     if (requestedUpdate.exchange(false) && renderTaskHandle) {
-      xTaskNotify(renderTaskHandle, 1, eIncrement);
+      notifyRender();
     }
     return;
   }
@@ -251,7 +253,7 @@ void ActivityManager::loop() {
     // Using direct notification to signal the render task to update
     // Increment counter so multiple rapid calls won't be lost
     if (renderTaskHandle) {
-      xTaskNotify(renderTaskHandle, 1, eIncrement);
+      notifyRender();
     }
   }
 }
@@ -380,8 +382,8 @@ void ActivityManager::goToReader(std::string path, const bool allowFastInitialRe
   }
 }
 
-void ActivityManager::goToSleep(bool fromTimeout) {
-  replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput, fromTimeout));
+void ActivityManager::goToSleep(bool fromTimeout, bool fromReset) {
+  replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput, fromTimeout, fromReset));
   if (pendingAction == PendingAction::Replace) pendingAction = PendingAction::ReplaceForSleep;
   loop();  // Important: sleep screen must be rendered immediately, the caller will go to sleep right after this returns
 }
@@ -511,10 +513,15 @@ void ActivityManager::prepareForSleep() {
   if (currentActivity) currentActivity->prepareForSleep();
 }
 
+void ActivityManager::notifyRender() {
+  renderRequested.fetch_add(1);
+  xTaskNotify(renderTaskHandle, 1, eIncrement);
+}
+
 void ActivityManager::requestUpdate(bool immediate) {
   if (immediate) {
     if (renderTaskHandle) {
-      xTaskNotify(renderTaskHandle, 1, eIncrement);
+      notifyRender();
     }
   } else {
     // Deferring the update until current loop is finished
@@ -548,7 +555,7 @@ void ActivityManager::requestUpdateAndWait() {
   // Cannot call while holding RenderLock or it will cause a deadlock
   assert(!holdingRenderLock && "Cannot call requestUpdateAndWait() while holding RenderLock");
 
-  xTaskNotify(renderTaskHandle, 1, eIncrement);
+  notifyRender();
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 }
 

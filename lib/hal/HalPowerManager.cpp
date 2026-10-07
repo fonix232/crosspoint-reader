@@ -5,9 +5,15 @@
 #include <PowerManager.h>
 #include <WiFi.h>
 #include <esp_sleep.h>
+#if FREEINK_DEVICE_PAPERS3
+#include <esp32-hal-bt.h>
+#endif
 #include <soc/soc_caps.h>
 
 #include <cassert>
+#if FREEINK_DEVICE_PAPERS3
+#include <BoardPaperS3.h>
+#endif
 
 #include "HalDoubleTap.h"
 #include "HalFrontlight.h"
@@ -40,14 +46,53 @@ void HalPowerManager::begin() {
   assert(modeMutex != nullptr);
 }
 
+bool HalPowerManager::idleNap() {
+#if FREEINK_DEVICE_PAPERS3
+  if (!isLowPower || currentLockMode != None || gpio.isUsbConnected() || WiFi.getMode() != WIFI_MODE_NULL ||
+      btStarted())
+    return false;
+  const uint32_t slept = BoardPaperS3::idleSleep(10);
+  if (slept) {
+    idleSleepUs += slept;
+    ++idleSleepCount;
+    return true;
+  }
+#endif
+  return false;
+}
+
+bool HalPowerManager::batteryCritical() {
+#if FREEINK_DEVICE_PAPERS3
+  static unsigned long lastSample = 0;
+  static uint8_t lowSamples = 0;
+  if (gpio.isUsbConnected()) {
+    lowSamples = 0;
+    return false;
+  }
+  const auto now = millis();
+  if (now - lastSample < 30000) return false;
+  lastSample = now;
+  const BatteryMonitor battery;
+  const auto status = battery.readStatus();
+  if (status.millivoltsKnown && status.millivolts > 0 && status.millivolts < 3400)
+    ++lowSamples;
+  else
+    lowSamples = 0;
+  return lowSamples >= 3;
+#else
+  return false;
+#endif
+}
+
 void HalPowerManager::setPowerSaving(bool enabled) {
   if (normalFreq <= 0) {
     return;  // invalid state
   }
 
   auto wifiMode = WiFi.getMode();
-  if (wifiMode != WIFI_MODE_NULL) {
-    // Wifi is active, force disabling power saving
+  if (wifiMode != WIFI_MODE_NULL && LOW_POWER_FREQ < 80) {
+    // Wi-Fi needs an 80 MHz APB clock. PSRAM boards already idle at 80 MHz;
+    // only block the sub-80 MHz mode used by smaller boards.
     enabled = false;
   }
 
@@ -153,9 +198,14 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio, const bool wakeOnHeldButton)
 #endif
 #if FREEINK_DEVICE_PAPERS3
   HalDoubleTap::sleep(gpio.isUsbConnected());
-  // PMS150G resets CHIP_PU on the next button click. Keep its latch powered:
-  // cutting it here can immediately reboot on USB and undo the sleep request.
-  LOG_INF("PWR", "PaperS3 deep sleep; wake by external button reset");
+  // The screen and storage have already been finalized. On battery, release
+  // the PMS150G main-power latch; waking is a cold boot either way. On USB,
+  // pulsing the latch can reboot immediately, so retain the sleep fallback.
+  if (!gpio.isUsbConnected()) {
+    BoardPaperS3::powerOff();
+    delay(100);
+  }
+  LOG_INF("PWR", "PaperS3 still powered; entering sleep fallback");
 #endif
 
   if (wakeOnHeldButton) {
@@ -221,15 +271,6 @@ uint16_t HalPowerManager::getBatteryPercentage() const {
     return _batteryCachedPercent;
   }
 
-  // One reading a minute in the log, so an ADC path that reads 0 mV on a new
-  // board shows up as such rather than as a permanently empty battery.
-  static unsigned long lastBatteryLogMs = 0;
-  if (millis() - lastBatteryLogMs > 60000) {
-    lastBatteryLogMs = millis();
-    LOG_DBG("PWR", "battery ADC pin %d: %u mV -> %u%%", BoardConfig::ACTIVE.batteryAdc, battery.readMillivolts(),
-            battery.readPercentage());
-  }
-
   // smooth the battery %.
   if (_batteryCachedPercent == 0) {
     _batteryCachedPercent = 10 * battery.readPercentage();
@@ -237,6 +278,27 @@ uint16_t HalPowerManager::getBatteryPercentage() const {
     _batteryCachedPercent = (_batteryCachedPercent * 9 + battery.readPercentage() * 10) / 10;
   }
   return _batteryCachedPercent / 10;
+}
+
+HalPowerManager::Diagnostics HalPowerManager::diagnostics() const {
+  Diagnostics result;
+  const BatteryMonitor battery;
+  const auto status = battery.readStatus();
+  if (status.millivoltsKnown) result.millivolts = status.millivolts;
+  if (status.percentageKnown) result.estimatedPercent = status.percentage;
+  result.displayedPercent =
+      BoardConfig::ACTIVE.batteryGauge.gaugeAddr ? _batteryCachedPercent : _batteryCachedPercent / 10;
+  result.cpuMhz = getCpuFrequencyMhz();
+  result.wifiMode = static_cast<int>(WiFi.getMode());
+  result.wifiConnected = WiFi.status() == WL_CONNECTED;
+  result.usbConnected = gpio.isUsbConnected();
+  if (status.chargingKnown) result.charging = status.charging;
+#if FREEINK_DEVICE_PAPERS3
+  result.usbMillivolts = BoardPaperS3::usbMillivolts();
+  result.epdPower = digitalRead(PAPERS3_EP_PWR);
+  result.epdOutputEnable = digitalRead(PAPERS3_EP_OE);
+#endif
+  return result;
 }
 
 HalPowerManager::Lock::Lock() {

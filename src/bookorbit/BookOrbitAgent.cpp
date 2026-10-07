@@ -165,6 +165,20 @@ size_t BookOrbitAgent::queuedCount() const {
   return queuedIds.size();
 }
 
+bool BookOrbitAgent::lockIdle() {
+  if (!mutex) return true;
+  if (xSemaphoreTake(mutex, 0) != pdTRUE) return false;
+  if (busy() || wifiOwned.load() || pausedFlag.load() || (queue && uxQueueMessagesWaiting(queue))) {
+    xSemaphoreGive(mutex);
+    return false;
+  }
+  return true;
+}
+
+void BookOrbitAgent::unlockIdle() {
+  if (mutex) xSemaphoreGive(mutex);
+}
+
 void BookOrbitAgent::pause() {
   // Serialize pause with job admission: a dequeued command must either become
   // busy before this lock, or observe paused before touching storage/the radio.

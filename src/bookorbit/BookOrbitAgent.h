@@ -57,6 +57,9 @@ class BookOrbitAgent {
   void requestInsights(uint32_t monthCode = 0, bool syncReading = false);
   void disconnectNow();
   // Foreground BookOrbit screens take over the radio while they run.
+  // Main task idle guard: blocks admission without cancelling or consuming jobs.
+  bool lockIdle();
+  void unlockIdle();
   void pause();
   void resume();
 

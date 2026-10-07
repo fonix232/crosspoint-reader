@@ -49,6 +49,7 @@
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "bookorbit/BookOrbitAgent.h"
 #include "components/UITheme.h"
+#include "diagnostics/PowerLog.h"
 #include "fontIds.h"
 #include "network/UsbFirmwareProtocol.h"
 #include "network/UsbFirmwareUpdate.h"
@@ -482,6 +483,7 @@ static bool holdSleepWhileUsbPowered() {
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false, bool fromReset = false) {
+  power_log::record("sleep_request", activityManager.isReaderActivity());
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   if (!fromReset) APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
   if (BoardConfig::isM5PaperS3()) APP_STATE.paperS3Awake = false;
@@ -507,7 +509,10 @@ void enterDeepSleep(bool fromTimeout = false, bool fromReset = false) {
 
   APP_STATE.saveToFile();
 
-  activityManager.goToSleep(fromTimeout);
+  // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
+  // a WiFi activity would otherwise silentRestart() here and reboot instead.
+  deepSleepInProgress = true;
+  activityManager.goToSleep(fromTimeout, fromReset);
 
   if (isQuickResumeSleep) {
     saveSleepFrameBuffer();
@@ -537,6 +542,7 @@ void enterDeepSleep(bool fromTimeout = false, bool fromReset = false) {
 
   halTiltSensor.deepSleep();
   display.deepSleep();
+  power_log::record("sleep_ready", false);
   Storage.prepareForDeepSleep();
   LOG_DBG("MAIN", "Entering deep sleep");
 
@@ -593,9 +599,9 @@ void setup() {
 #endif
 
 #ifdef ENABLE_SERIAL_LOG
-#ifdef CROSSPOINT_WAIT_FOR_USB_SERIAL
-  // Development builds preserve reliable early CDC logs; release builds let
-  // enumeration proceed asynchronously so users do not pay this startup cost.
+#if defined(CROSSPOINT_WAIT_FOR_USB_SERIAL) && !FREEINK_DEVICE_PAPERS3
+  // PaperS3 also boots to enter sleep after its reset-only power button.
+  // Let USB enumerate asynchronously there instead of delaying sleep.
   delay(250);
 #endif
   Serial.begin(115200);
@@ -668,6 +674,7 @@ void setup() {
     return;
   }
 
+  power_log::record("boot", false);
   HalSystem::checkPanic();
 
   APP_STATE.loadFromFile();
@@ -956,6 +963,13 @@ void loop() {
   while (logSerial.available() > 0) {
     const char* command = serialCommand.feed(logSerial.read());
     if (!command) continue;
+    if (strcmp(command, "CMD:POWERLOG") == 0) {
+      if (activityManager.requiresExclusiveStorageLoop())
+        logSerial.println("POWERLOG_BUSY");
+      else
+        power_log::exportLog();
+      break;
+    }
     if (usb_firmware::handleCommand(command)) return;
     if (strcmp(command, "CMD:SCREENSHOT") == 0 && !activityManager.requiresExclusiveStorageLoop()) {
       RenderLock lock;
@@ -983,6 +997,12 @@ void loop() {
     return;
   }
 
+  power_log::poll(activityManager.isReaderActivity());
+  if (powerManager.batteryCritical()) {
+    power_log::record("low_battery", activityManager.isReaderActivity());
+    enterDeepSleep();
+    return;
+  }
   // After the exclusive-storage return: it saves settings to the SD card.
   handleSlideSwitch();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
@@ -1198,6 +1218,22 @@ void loop() {
     if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS && !pageturner::holdsCpu.load()) {
       // If we've been inactive for a while, increase the delay to save power
       powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
+      // PaperS3 retains the open page and touch polling cadence while suspending
+      // both CPUs. Hold renderer and job admission across the nap so no DMA,
+      // storage or radio work can start concurrently.
+      if (BoardConfig::isM5PaperS3() && !activityManager.preventAutoSleep() &&
+          (activityManager.isReaderActivity() || activityManager.isHomeActivity())) {
+        RenderLock lock(RenderLock::Mode::Try);
+        if (lock.ownsLock() && activityManager.debugRenderIdle() && BOOKORBIT_AGENT.lockIdle()) {
+          const bool slept = powerManager.idleNap();
+          BOOKORBIT_AGENT.unlockIdle();
+          if (slept) {
+            lock.unlock();
+            delay(1);  // Let idle/worker tasks run between manual sleep intervals.
+            return;
+          }
+        }
+      }
       // Sleep in short slices and wake the poll as soon as a button contact closes.
       // InputManager commits a press only when two consecutive polls agree, so a
       // press shorter than one 50 ms sleep could land in a single sample and be lost.
