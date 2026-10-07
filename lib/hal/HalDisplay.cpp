@@ -1,5 +1,9 @@
 #include <HalDisplay.h>
 #include <HalGPIO.h>
+#if FREEINK_DRIVER_PAPERS3
+#include <Logging.h>
+#include <driver/PaperS3Driver.h>
+#endif
 
 // Global HalDisplay instance
 HalDisplay display;
@@ -11,6 +15,14 @@ HalDisplay::HalDisplay() : einkDisplay(EPD_SCLK, EPD_MOSI, EPD_CS, EPD_DC, EPD_R
 HalDisplay::~HalDisplay() {}
 
 HalDisplay::Controller HalDisplay::getController() const { return BoardConfig::ACTIVE.displayController; }
+
+void HalDisplay::setPaperS3Waveform(uint8_t waveform) {
+#if FREEINK_DRIVER_PAPERS3
+  freeink::paperS3Driver().setWaveform(static_cast<freeink::PaperS3Waveform>(waveform));
+#else
+  (void)waveform;
+#endif
+}
 
 void HalDisplay::setReaderRendering(bool enabled) { einkDisplay.setReaderRendering(enabled); }
 
@@ -75,6 +87,10 @@ void HalDisplay::displayBuffer(HalDisplay::RefreshMode mode, bool turnOffScreen)
   }
 
   einkDisplay.displayBuffer(convertRefreshMode(mode), turnOffScreen);
+#if FREEINK_DRIVER_PAPERS3
+  const auto timing = freeink::paperS3Driver().lastScanTiming();
+  LOG_DBG("P3SCAN", "bw cpu=%lu rows=%lu total=%lu us", timing.cpuMhz, timing.rows, timing.totalUs);
+#endif
 }
 
 void HalDisplay::displayBufferAsync(HalDisplay::RefreshMode mode) {
@@ -153,7 +169,14 @@ void HalDisplay::copyGrayscaleMsbBuffers(const uint8_t* msbBuffer) { einkDisplay
 
 void HalDisplay::cleanupGrayscaleBuffers(const uint8_t* bwBuffer) { einkDisplay.cleanupGrayscaleBuffers(bwBuffer); }
 
-void HalDisplay::displayGrayBuffer(bool turnOffScreen) { einkDisplay.displayGrayBuffer(turnOffScreen); }
+void HalDisplay::displayGrayBuffer(bool turnOffScreen) {
+  einkDisplay.displayGrayBuffer(turnOffScreen);
+#if FREEINK_DRIVER_PAPERS3
+  const auto timing = freeink::paperS3Driver().lastScanTiming();
+  LOG_DBG("P3SCAN", "cpu=%lu rows=%lu total=%lu convert=%lu wait=%lu submit=%lu us", timing.cpuMhz, timing.rows,
+          timing.totalUs, timing.convertUs, timing.waitUs, timing.submitUs);
+#endif
+}
 
 void HalDisplay::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* rows, uint16_t yStart, uint16_t numRows) {
   einkDisplay.writeGrayscalePlaneStrip(lsbPlane ? EInkDisplay::GRAY_PLANE_LSB : EInkDisplay::GRAY_PLANE_MSB, rows,

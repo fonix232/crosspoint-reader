@@ -8,6 +8,7 @@ class HalDisplay {
   using Controller = BoardConfig::DisplayController;
   Controller getController() const;
   void setReaderRendering(bool enabled);
+  void setPaperS3Waveform(uint8_t waveform);
 
   using GrayscaleMode = freeink::GrayscaleMode;
   using GrayscaleCapabilities = freeink::GrayscaleCapabilities;

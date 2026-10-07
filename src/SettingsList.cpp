@@ -32,6 +32,11 @@ void forEachBaseSetting(SettingVisitor visit, void* context) {
 
   const auto emit = [visit, context](auto&& info) { visit(context, info); };
   // --- Display ---
+#if FREEINK_DRIVER_PAPERS3
+  emit(SettingInfo::Enum(StrId::STR_DISPLAY_WAVEFORM, &CrossPointSettings::paperS3Waveform,
+                         {StrId::STR_DISPLAY_WAVEFORM_NATIVE, StrId::STR_DISPLAY_WAVEFORM_LOVYAN},
+                         "paperS3DisplayWaveform", StrId::STR_CAT_DISPLAY));
+#endif
   if (BoardConfig::isM5PaperS3())
     emit(SettingInfo::Toggle(StrId::STR_DOUBLE_TAP_SLEEP, &CrossPointSettings::paperS3DoubleTap, "paperS3DoubleTap",
                              StrId::STR_CAT_DISPLAY));

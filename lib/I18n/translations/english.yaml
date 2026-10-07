@@ -884,3 +884,7 @@ STR_BOOKORBIT_APPLY_LIBRARIES: "Apply and sync"
 STR_BOOKORBIT_LIBRARIES_SELECTED: "%u selected"
 STR_BOOKORBIT_LIBRARY_LIMIT: "Select up to 32 libraries"
 STR_BOOKORBIT_LIBRARY_NOT_SELECTED: "This book’s library is not selected for sync"
+
+STR_DISPLAY_WAVEFORM: "Display waveform"
+STR_DISPLAY_WAVEFORM_NATIVE: "Native"
+STR_DISPLAY_WAVEFORM_LOVYAN: "LovyanGFX (reference)"

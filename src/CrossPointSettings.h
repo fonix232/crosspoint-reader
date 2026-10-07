@@ -337,6 +337,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t uiTheme = LYRA;
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
+  uint8_t paperS3Waveform = 0;  // freeink::PaperS3Waveform: 0 native, 1 LovyanGFX reference.
   // Power button return from footnotes (1 = enabled, 0 = disabled)
   uint8_t pwrBtnFootnoteBack = 1;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)

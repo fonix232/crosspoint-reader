@@ -89,6 +89,7 @@ void ActivityManager::renderTaskLoop() {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
       // Night mode is a global output polarity applied to every activity.
       // The sleep screen forces normal polarity itself (SleepActivity).
+      display.setPaperS3Waveform(SETTINGS.paperS3Waveform);
       display.setInverted(SETTINGS.screenInverted != 0);
       const uint32_t renderingVisit = screenVisit;
       display.setReaderRendering(currentActivity->usesReaderWaveform());

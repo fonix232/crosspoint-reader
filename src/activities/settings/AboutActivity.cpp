@@ -46,6 +46,8 @@ const char* displayControllerName(const BoardConfig::DisplayController c) {
       return "UC8253";
     case BoardConfig::DisplayController::ED2208:
       return "ED2208";
+    case BoardConfig::DisplayController::PaperS3:
+      return "ED047TC1";
     case BoardConfig::DisplayController::LgfxEpd:
       return "LovyanGFX EPD";
     case BoardConfig::DisplayController::IT8951:
