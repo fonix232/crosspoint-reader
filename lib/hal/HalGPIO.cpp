@@ -115,6 +115,7 @@ void HalGPIO::update() {
   const uint8_t pageButtons = inputMgr.capacitivePageButtonMask();
   capacitivePagePressed = (pageButtons & ~previousCapacitivePageButtons) != 0;
   previousCapacitivePageButtons = pageButtons;
+  injected.update(millis());
   const bool connected = isUsbConnected();
   usbStateChanged = (connected != lastUsbConnected);
   lastUsbConnected = connected;
@@ -122,21 +123,28 @@ void HalGPIO::update() {
 
 bool HalGPIO::wasUsbStateChanged() const { return usbStateChanged; }
 
-bool HalGPIO::isPressed(uint8_t buttonIndex) const { return inputMgr.isPressed(buttonIndex); }
+bool HalGPIO::isPressed(uint8_t buttonIndex) const {
+  return inputMgr.isPressed(buttonIndex) || (buttonIndex < 7 && (injected.buttons & (1u << buttonIndex)));
+}
 
 void HalGPIO::prepareForDeepSleep() {
   if (!inputMgr.prepareForDeepSleep()) LOG_ERR("GPIO", "Failed to put touch controller to sleep");
 }
 
-bool HalGPIO::wasPressed(uint8_t buttonIndex) const { return inputMgr.wasPressed(buttonIndex); }
+bool HalGPIO::wasPressed(uint8_t buttonIndex) const {
+  return inputMgr.wasPressed(buttonIndex) || (buttonIndex < 7 && (injected.pressed & (1u << buttonIndex)));
+}
 
-bool HalGPIO::wasAnyPressed() const { return inputMgr.wasAnyPressed(); }
+bool HalGPIO::wasAnyPressed() const { return inputMgr.wasAnyPressed() || (injected.pressed & 0x7f); }
 
-bool HalGPIO::wasReleased(uint8_t buttonIndex) const { return inputMgr.wasReleased(buttonIndex); }
+bool HalGPIO::wasReleased(uint8_t buttonIndex) const {
+  return inputMgr.wasReleased(buttonIndex) || (buttonIndex < 7 && (injected.released & (1u << buttonIndex)));
+}
 
-bool HalGPIO::wasAnyReleased() const { return inputMgr.wasAnyReleased(); }
+bool HalGPIO::wasAnyReleased() const { return inputMgr.wasAnyReleased() || (injected.released & 0x7f); }
 
 bool HalGPIO::rawInputActive() {
+  if (injected.active()) return true;
   if (inputMgr.isPowerButtonPhysicallyPressed()) return true;
   InputManager::ButtonAdcSample g1{}, g2{};
   inputMgr.readButtonAdc(g1, g2);
@@ -145,48 +153,86 @@ bool HalGPIO::rawInputActive() {
   return (g1.raw >= 0 && g1.raw < kIdleRailMin) || (g2.raw >= 0 && g2.raw < kIdleRailMin);
 }
 
-unsigned long HalGPIO::getHeldTime() const { return inputMgr.getHeldTime(); }
+unsigned long HalGPIO::getHeldTime() const {
+  return (injected.buttons & 0x7f) || (injected.released & 0x7f) ? injected.held(millis()) : inputMgr.getHeldTime();
+}
 
-unsigned long HalGPIO::getPowerButtonHeldTime() const { return inputMgr.getPowerButtonHeldTime(); }
+unsigned long HalGPIO::getPowerButtonHeldTime() const {
+  if (injected.buttons & (1u << BTN_POWER)) return injected.held(millis(), BTN_POWER);
+  if (injected.released & (1u << BTN_POWER)) return injected.lastPowerHeld;
+  return inputMgr.getPowerButtonHeldTime();
+}
 
 bool HalGPIO::hasTouch() const { return inputMgr.hasTouch(); }
 bool HalGPIO::requiresTouchNavigation() const { return BoardConfig::requiresTouchNavigation(); }
 
 bool HalGPIO::hasHomeKey() const { return BoardConfig::hasHomeKey(); }
 
-bool HalGPIO::wasHomeKeyPressed() const { return inputMgr.wasHomeKeyPressed(); }
+bool HalGPIO::wasHomeKeyPressed() const {
+  return inputMgr.wasHomeKeyPressed() || (injected.pressed & (1u << DebugInput::HOME));
+}
 
-bool HalGPIO::wasHomeKeyTapped() const { return inputMgr.wasHomeKeyTapped(); }
+bool HalGPIO::wasHomeKeyTapped() const { return inputMgr.wasHomeKeyTapped() || injected.homeTap; }
 
 bool HalGPIO::hasToggleSwitch() const { return inputMgr.hasToggleSwitch(); }
 
 bool HalGPIO::isToggleSwitchOn() const { return inputMgr.isToggleSwitchOn(); }
 
-bool HalGPIO::wasHomeKeyLongPressed() const { return inputMgr.wasHomeKeyLongPressed(); }
+bool HalGPIO::wasHomeKeyLongPressed() const { return inputMgr.wasHomeKeyLongPressed() || injected.homeLong; }
 
-bool HalGPIO::wasTouchTap(float& nx, float& ny) const { return inputMgr.wasTouchTap(nx, ny); }
+bool HalGPIO::debugPoint(DebugInput::Point point, float& nx, float& ny) const {
+  nx = (point.x + 0.5f) / debugWidth;
+  ny = (point.y + 0.5f) / debugHeight;
+  return true;
+}
 
-bool HalGPIO::wasTouchDown(float& nx, float& ny) const { return inputMgr.wasTouchPressedAt(nx, ny); }
+bool HalGPIO::wasTouchTap(float& nx, float& ny) const {
+  return injected.tap() ? debugPoint(injected.start, nx, ny) : inputMgr.wasTouchTap(nx, ny);
+}
 
-bool HalGPIO::wasTouchReleased() const { return inputMgr.wasTouchReleased(); }
+bool HalGPIO::wasTouchDown(float& nx, float& ny) const {
+  return injected.down ? debugPoint(injected.start, nx, ny) : inputMgr.wasTouchPressedAt(nx, ny);
+}
+
+bool HalGPIO::wasTouchReleased() const { return injected.up || inputMgr.wasTouchReleased(); }
 
 bool HalGPIO::isTouchTapCandidate(float& nx, float& ny, unsigned long& heldMs) const {
+  if (injected.touch && !injected.suppressed && !injected.moved) {
+    heldMs = millis() - injected.touchAt;
+    return debugPoint(injected.start, nx, ny);
+  }
   return inputMgr.isTouchTapCandidate(nx, ny, heldMs);
 }
 
-bool HalGPIO::isTouchHeldAt(float& nx, float& ny) const { return inputMgr.isTouchHeldAt(nx, ny); }
+bool HalGPIO::isTouchHeldAt(float& nx, float& ny) const {
+  return injected.touch && !injected.suppressed ? debugPoint(injected.position, nx, ny)
+                                                : inputMgr.isTouchHeldAt(nx, ny);
+}
 
-bool HalGPIO::wasTouchLongPress(float& nx, float& ny) const { return inputMgr.wasTouchLongPress(nx, ny); }
+bool HalGPIO::wasTouchLongPress(float& nx, float& ny) const {
+  return injected.longPress && !injected.suppressed ? debugPoint(injected.start, nx, ny)
+                                                    : inputMgr.wasTouchLongPress(nx, ny);
+}
 
-void HalGPIO::suppressTouchContact() { inputMgr.suppressTouchContact(); }
+void HalGPIO::suppressTouchContact() {
+  if (injected.touch) injected.suppressed = true;
+  inputMgr.suppressTouchContact();
+}
 
-unsigned long HalGPIO::lastTouchHeldMs() const { return inputMgr.lastTouchHeldMs(); }
+unsigned long HalGPIO::lastTouchHeldMs() const { return injected.up ? injected.touchHeld : inputMgr.lastTouchHeldMs(); }
 
 bool HalGPIO::wasSwipe(float& nxStart, float& nyStart, float& nxEnd, float& nyEnd) const {
+  if (injected.swipe()) {
+    debugPoint(injected.start, nxStart, nyStart);
+    return debugPoint(injected.position, nxEnd, nyEnd);
+  }
   return inputMgr.wasSwipe(nxStart, nyStart, nxEnd, nyEnd);
 }
 
-bool HalGPIO::wasTouchActivity() const { return inputMgr.wasTouchActivity(); }
+bool HalGPIO::wasTouchActivity() const {
+  return inputMgr.wasTouchActivity() || injected.down || injected.up || injected.touch || (injected.pressed & 0x80) ||
+         injected.homeLong || injected.homeTap;
+}
 
 void HalGPIO::setSharedConfirmPowerShortPressEmitsPower(const bool enabled) {
   InputManager::setSharedConfirmPowerShortPressEmitsPower(enabled);

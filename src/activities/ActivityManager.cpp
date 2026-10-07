@@ -295,16 +295,18 @@ void ActivityManager::goToJoinNetwork() {
   replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput, /*startInJoinNetwork=*/true));
 }
 
-void ActivityManager::goToUsbDrive() {
+bool ActivityManager::goToUsbDrive() {
 #if FREEINK_CAP_USB_MSC
   auto activity = makeUniqueNoThrow<UsbDriveActivity>(renderer, mappedInput);
   if (!activity) {
     LOG_ERR("ACT", "OOM: USB Drive activity");
-    return;
+    return false;
   }
   replaceActivity(std::move(activity));
+  return true;
 #else
   LOG_ERR("ACT", "USB Drive requested in a build without USB Drive capability");
+  return false;
 #endif
 }
 

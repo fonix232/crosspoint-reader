@@ -49,6 +49,7 @@
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "bookorbit/BookOrbitAgent.h"
 #include "components/UITheme.h"
+#include "debug/WiredDebug.h"
 #include "diagnostics/PowerLog.h"
 #include "fontIds.h"
 #include "network/UsbFirmwareProtocol.h"
@@ -937,14 +938,67 @@ void setup() {
   allowSleepAt = millis() + 2000;
 }
 
+static bool handleUsbDriveCommand(const char* command) {
+  if (strncmp(command, "CMD:USB ", 8) != 0) return false;
+#if FREEINK_CAP_USB_MSC
+  const char* action = command + 8;
+  const bool active = activityManager.requiresExclusiveStorageLoop();
+  if (strcmp(action, "STATUS") == 0 || (strcmp(action, "ON") == 0 && active)) {
+    const char* state = "OFF";
+    if (active) {
+      switch (Storage.usbDriveState()) {
+        case UsbDriveState::WaitingForHost:
+          state = "WAITING";
+          break;
+        case UsbDriveState::Connected:
+          state = "CONNECTED";
+          break;
+        case UsbDriveState::Ejected:
+          state = "EJECTED";
+          break;
+        case UsbDriveState::Disconnected:
+          state = "DISCONNECTED";
+          break;
+        case UsbDriveState::IoError:
+          state = "ERROR";
+          break;
+        case UsbDriveState::Unsupported:
+          state = "UNSUPPORTED";
+          break;
+      }
+    }
+    logSerial.printf("USB:%s\n", state);
+  } else if (strcmp(action, "ON") == 0) {
+    logSerial.println(activityManager.goToUsbDrive() ? "USB:STARTING" : "USB:ERROR START_FAILED");
+  } else if (strcmp(action, "OFF") == 0) {
+    if (!active) {
+      logSerial.println("USB:OFF");
+    } else {
+      const auto state = Storage.usbDriveState();
+      if (state == UsbDriveState::Connected || state == UsbDriveState::IoError) {
+        logSerial.println("USB:ERROR EJECT_REQUIRED");
+      } else {
+        logSerial.println("USB:RESTARTING");
+        logSerial.flush();
+        Storage.endUsbDrive();
+        restartToHomeAfterStorageHandoff();
+      }
+    }
+  } else {
+    logSerial.println("USB:ERROR EXPECT_ON_OFF_STATUS");
+  }
+#else
+  logSerial.println("USB:ERROR UNSUPPORTED");
+#endif
+  return true;
+}
+
 void loop() {
   static unsigned long maxLoopDuration = 0;
   const unsigned long loopStartTime = millis();
   static unsigned long lastMemPrint = 0;
 
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
-  mappedInputManager.update();
-
   // Bluetooth page turner, before the USB drive's early return: a card handed to USB stops the radio
   // before anything else.
   bleturner::Scene scene{};
@@ -970,7 +1024,13 @@ void loop() {
         power_log::exportLog();
       break;
     }
+    if (handleUsbDriveCommand(command)) {
+      gpio.debugInput().reset();
+      break;
+    }
+    if (strncmp(command, "CMD:FW_", 7) == 0) gpio.debugInput().reset();
     if (usb_firmware::handleCommand(command)) return;
+    if (wired_debug::handleCommand(command, renderer, display, activityManager.requiresExclusiveStorageLoop())) break;
     if (strcmp(command, "CMD:SCREENSHOT") == 0 && !activityManager.requiresExclusiveStorageLoop()) {
       RenderLock lock;
       const uint32_t bufferSize = display.getBufferSize();
@@ -981,7 +1041,10 @@ void loop() {
     break;
   }
 
+  mappedInputManager.update();
+
   if (activityManager.requiresExclusiveStorageLoop()) {
+    gpio.debugInput().reset();
     // USB Drive handed the raw SD card to the host. Do not run screenshots,
     // sleep, shortcuts, or normal navigation while its filesystem is detached.
     activityManager.loop();

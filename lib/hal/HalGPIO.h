@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <InputManager.h>
 
+#include "DebugInput.h"
+
 // Display SPI pins (custom pins for XteinkX4, not hardware SPI defaults)
 #define EPD_SCLK 8   // SPI Clock
 #define EPD_MOSI 10  // SPI MOSI (Master Out Slave In)
@@ -43,6 +45,10 @@ class HalGPIO {
   InputManager inputMgr;
 #endif
 
+  DebugInput injected;
+  uint16_t debugWidth = 1, debugHeight = 1;
+  bool debugPoint(DebugInput::Point point, float& nx, float& ny) const;
+
   bool lastUsbConnected = false;
   bool usbStateChanged = false;
   uint8_t previousCapacitivePageButtons = 0;
@@ -56,6 +62,11 @@ class HalGPIO {
 
  public:
   HalGPIO() = default;
+  DebugInput& debugInput() { return injected; }
+  void setDebugGeometry(uint16_t width, uint16_t height) {
+    debugWidth = width;
+    debugHeight = height;
+  }
 
   // Inline device type helpers for cleaner downstream checks
   inline bool deviceIsX3() const { return _deviceType == DeviceType::X3; }
